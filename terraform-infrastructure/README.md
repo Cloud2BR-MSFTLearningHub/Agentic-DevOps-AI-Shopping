@@ -12,7 +12,7 @@ Last updated: 2025-11-03
 > This approach focuses on `setting up the required infrastructure via Terraform`. It allows for source control of not only the solution code, connections, and setups `but also the infrastructure itself`.
 
 <div align="center">
-  <img src="" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+  <img src="https://github.com/user-attachments/assets/fecb8a4d-017f-49b4-9217-c0b94cebb935" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
 
 ## Prerequisites
