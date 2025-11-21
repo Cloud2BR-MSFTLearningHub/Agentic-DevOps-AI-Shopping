@@ -16,7 +16,7 @@ Last updated: 2025-11-03
 </div>
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/ad6076d7-4ff9-441a-9ccb-02daa8ac24d7" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+  <img src="" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
 
 ## Prerequisites
