@@ -278,3 +278,322 @@ resource "azurerm_role_assignment" "search_project_contributor" {
   principal_id       = azurerm_search_service.search.identity[0].principal_id
   principal_type     = "ServicePrincipal"
 }
+
+# Storage account permissions for Azure AI Foundry project
+resource "azurerm_role_assignment" "storage_blob_data_contributor_user" {
+  scope              = azapi_resource.storage.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+  principal_id       = local.principal_id
+  principal_type     = "User"
+}
+
+resource "azurerm_role_assignment" "storage_blob_data_contributor_project" {
+  scope              = azapi_resource.storage.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+  principal_id       = azapi_resource.ai_project.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Azure AI model deployments automation
+resource "null_resource" "ai_model_deployments" {
+  count = var.enable_ai_automation ? 1 : 0
+  
+  depends_on = [
+    azapi_resource.ai_project,
+    azapi_resource.ai_foundry,
+    azurerm_role_assignment.storage_blob_data_contributor_user
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Create AI model deployments
+      Write-Host "Creating Azure AI model deployments..."
+      
+      # Wait for AI Foundry to be fully ready
+      Write-Host "Waiting for AI Foundry to be ready..."
+      Start-Sleep -Seconds 30
+      
+      try {
+        # Create gpt-4o-mini deployment
+        Write-Host "Creating gpt-4o-mini deployment..."
+        az cognitiveservices account deployment create `
+          --resource-group "${azurerm_resource_group.rg.name}" `
+          --name "${local.ai_foundry_name}" `
+          --deployment-name "gpt-4o-mini" `
+          --model-name "gpt-4o-mini" `
+          --model-version "2024-07-18" `
+          --model-format "OpenAI" `
+          --sku-capacity 10 `
+          --sku-name "GlobalStandard"
+        
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "gpt-4o-mini deployment created successfully"
+          } else {
+            Write-Host "gpt-4o-mini deployment may already exist or failed to create"
+          }        # Create text-embedding-3-small deployment
+        Write-Host "Creating text-embedding-3-small deployment..."
+        az cognitiveservices account deployment create `
+          --resource-group "${azurerm_resource_group.rg.name}" `
+          --name "${local.ai_foundry_name}" `
+          --deployment-name "text-embedding-3-small" `
+          --model-name "text-embedding-3-small" `
+          --model-version "1" `
+          --model-format "OpenAI" `
+          --sku-capacity 10 `
+          --sku-name "GlobalStandard"
+        
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "text-embedding-3-small deployment created successfully"
+          } else {
+            Write-Host "text-embedding-3-small deployment may already exist or failed to create"
+          }        # Create phi-4 deployment
+        Write-Host "Creating phi-4 deployment..."
+        try {
+          az cognitiveservices account deployment create `
+            --resource-group "${azurerm_resource_group.rg.name}" `
+            --name "${local.ai_foundry_name}" `
+            --deployment-name "phi-4" `
+            --model-name "phi-4" `
+            --model-version "1" `
+            --model-format "OpenAI" `
+            --sku-capacity 5 `
+            --sku-name "GlobalStandard"
+          
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "phi-4 deployment created successfully"
+            $phi4Available = $true
+          } else {
+            Write-Host "phi-4 model not available in this region/tier, skipping"
+            $phi4Available = $false
+          }
+        } catch {
+          Write-Host "phi-4 model not supported, skipping"
+          $phi4Available = $false
+        }
+        
+        # List all deployments to verify
+        Write-Host "`nCurrent model deployments:"
+        az cognitiveservices account deployment list `
+          --resource-group "${azurerm_resource_group.rg.name}" `
+          --name "${local.ai_foundry_name}" `
+          --query "[].{Name:name,Model:properties.model.name,Version:properties.model.version,Capacity:properties.currentCapacity}" `
+          --output table
+        
+        Write-Host "`nModel deployment process completed successfully."
+      }
+      catch {
+        Write-Host "Error during model deployment: $_"
+        Write-Host "This may be expected if deployments already exist."
+      }
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+  }
+
+  triggers = {
+    ai_foundry_id = azapi_resource.ai_foundry.id
+    ai_project_id = azapi_resource.ai_project.id
+  }
+}
+
+# Connect resources to Azure AI Foundry project
+resource "null_resource" "ai_project_connections" {
+  count = var.enable_ai_automation ? 1 : 0
+  
+  depends_on = [
+    null_resource.ai_model_deployments,
+    azurerm_application_insights.appinsights,
+    azapi_resource.storage
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host "Verifying Azure AI Foundry project configuration..."
+      
+      # Check if Azure ML extension is installed
+      $mlExtension = az extension list --query "[?name=='ml'].name" --output tsv
+      if (-not $mlExtension) {
+        Write-Host "Installing Azure ML extension..."
+        az extension add --name ml
+      }
+      
+      # Set the AI project as the default workspace for future ML operations
+      az config set defaults.workspace="${local.ai_project_name}"
+      az config set defaults.group="${azurerm_resource_group.rg.name}"
+      
+      Write-Host "Azure AI project configuration completed successfully."
+      Write-Host "Project Name: ${local.ai_project_name}"
+      Write-Host "AI Foundry: ${local.ai_foundry_name}"
+      Write-Host "Resource Group: ${azurerm_resource_group.rg.name}"
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+  }
+
+  triggers = {
+    storage_id = azapi_resource.storage.id
+    app_insights_id = azurerm_application_insights.appinsights.id
+    ai_project_id = azapi_resource.ai_project.id
+  }
+}
+
+# Create .env file with all necessary configuration
+resource "null_resource" "create_env_file" {
+  count = var.enable_ai_automation ? 1 : 0
+  
+  depends_on = [
+    null_resource.ai_project_connections,
+    azurerm_cosmosdb_account.cosmos,
+    azurerm_search_service.search
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host "Creating .env file with Azure resource configuration..."
+      
+      # Create src directory if it doesn't exist
+      if (!(Test-Path "../src")) {
+        New-Item -ItemType Directory -Path "../src" -Force
+      }
+      
+      # Get Azure AI Foundry endpoint
+      $aiFoundryEndpoint = az cognitiveservices account show `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.ai_foundry_name}" `
+        --query "properties.endpoint" `
+        --output tsv
+      
+      # Get Azure AI Foundry access key
+      $aiFoundryKey = az cognitiveservices account keys list `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.ai_foundry_name}" `
+        --query "key1" `
+        --output tsv
+      
+      # Get Cosmos DB primary key
+      $cosmosKey = az cosmosdb keys list `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.cosmos_account_name}" `
+        --query "primaryMasterKey" `
+        --output tsv
+      
+      # Get Azure Search admin key
+      $searchKey = az search admin-key show `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --service-name "${local.search_service_name}" `
+        --query "primaryKey" `
+        --output tsv
+      
+      # Get storage account connection string
+      $storageConnectionString = az storage account show-connection-string `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.storage_account}" `
+        --query "connectionString" `
+        --output tsv
+      
+      # Create .env file content
+      if ($phi4Available) {
+        $envContent = @"
+# Azure AI Foundry Configuration
+AZURE_AI_FOUNDRY_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
+AZURE_AI_PROJECT_NAME=${local.ai_project_name}
+
+# Azure OpenAI Model Deployments
+AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_OPENAI_PHI_DEPLOYMENT=phi-4
+AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
+AZURE_OPENAI_API_KEY=$aiFoundryKey
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Azure Cosmos DB Configuration
+COSMOS_DB_ENDPOINT=${azurerm_cosmosdb_account.cosmos.endpoint}
+COSMOS_DB_KEY=$cosmosKey
+COSMOS_DB_NAME=${local.cosmos_db_name}
+COSMOS_DB_CONTAINER_NAME=products
+
+# Azure AI Search Configuration
+SEARCH_SERVICE_ENDPOINT=https://${local.search_service_name}.search.windows.net
+SEARCH_SERVICE_KEY=$searchKey
+SEARCH_INDEX_NAME=products-index
+
+# Azure Storage Configuration
+STORAGE_ACCOUNT_NAME=${local.storage_account}
+STORAGE_CONNECTION_STRING=$storageConnectionString
+
+# Azure Application Insights
+APPLICATION_INSIGHTS_CONNECTION_STRING=${azurerm_application_insights.appinsights.connection_string}
+
+# Azure Resource Information
+AZURE_SUBSCRIPTION_ID=${data.azurerm_client_config.current.subscription_id}
+AZURE_RESOURCE_GROUP=${azurerm_resource_group.rg.name}
+AZURE_LOCATION=${var.location}
+"@
+      } else {
+        $envContent = @"
+# Azure AI Foundry Configuration
+AZURE_AI_FOUNDRY_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
+AZURE_AI_PROJECT_NAME=${local.ai_project_name}
+
+# Azure OpenAI Model Deployments
+AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
+AZURE_OPENAI_API_KEY=$aiFoundryKey
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Azure Cosmos DB Configuration
+COSMOS_DB_ENDPOINT=${azurerm_cosmosdb_account.cosmos.endpoint}
+COSMOS_DB_KEY=$cosmosKey
+COSMOS_DB_NAME=${local.cosmos_db_name}
+COSMOS_DB_CONTAINER_NAME=products
+
+# Azure AI Search Configuration
+SEARCH_SERVICE_ENDPOINT=https://${local.search_service_name}.search.windows.net
+SEARCH_SERVICE_KEY=$searchKey
+SEARCH_INDEX_NAME=products-index
+
+# Azure Storage Configuration
+STORAGE_ACCOUNT_NAME=${local.storage_account}
+STORAGE_CONNECTION_STRING=$storageConnectionString
+
+# Azure Application Insights
+APPLICATION_INSIGHTS_CONNECTION_STRING=${azurerm_application_insights.appinsights.connection_string}
+
+# Azure Resource Information
+AZURE_SUBSCRIPTION_ID=${data.azurerm_client_config.current.subscription_id}
+AZURE_RESOURCE_GROUP=${azurerm_resource_group.rg.name}
+AZURE_LOCATION=${var.location}
+"@
+      }
+      
+      # Write .env file
+      $envContent | Out-File -FilePath "../src/.env" -Encoding UTF8
+      
+      Write-Host ".env file created successfully at ../src/.env"
+      Write-Host "Environment variables configured for:"
+      if ($phi4Available) {
+        Write-Host "  - Models: gpt-4o-mini, text-embedding-3-small, phi-4"
+      } else {
+        Write-Host "  - Models: gpt-4o-mini, text-embedding-3-small (phi-4 not available)"
+      }
+      Write-Host "  - Azure AI Foundry: ${local.ai_foundry_name}"
+      Write-Host "  - Azure AI Project: ${local.ai_project_name}"
+      Write-Host "  - Cosmos DB: ${local.cosmos_account_name}"
+      Write-Host "  - Search Service: ${local.search_service_name}"
+      Write-Host "  - Storage Account: ${local.storage_account}"
+      Write-Host "  - Application Insights: ${local.app_insights_name}"
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+  }
+
+  triggers = {
+    # Trigger recreation when any of these resources change
+    ai_foundry_id = azapi_resource.ai_foundry.id
+    ai_project_id = azapi_resource.ai_project.id
+    cosmos_id = azurerm_cosmosdb_account.cosmos.id
+    search_id = azurerm_search_service.search.id
+    storage_id = azapi_resource.storage.id
+    app_insights_id = azurerm_application_insights.appinsights.id
+  }
+}

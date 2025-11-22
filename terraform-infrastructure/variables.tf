@@ -26,3 +26,9 @@ variable "enable_cosmos_local_auth" {
   description = "Whether to enable local auth on Cosmos DB account"
   default     = true
 }
+
+variable "enable_ai_automation" {
+  type        = bool
+  description = "Whether to run Azure AI Foundry automation steps (model deployments, connections, .env creation)"
+  default     = true
+}
