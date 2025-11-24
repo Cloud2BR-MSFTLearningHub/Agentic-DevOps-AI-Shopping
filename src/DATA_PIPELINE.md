@@ -31,8 +31,7 @@ Last updated: 2025-11-24
 
 
 > [!NOTE]
-> What It Does:
-> The data pipeline automation performs the following tasks:
+> What It Does? The data pipeline automation performs the following tasks:
 > 1. **Creates Python Virtual Environment**: Sets up an isolated Python environment with all required dependencies
 > 2. **Imports Data to Cosmos DB**: Loads product catalog data from CSV into Cosmos DB container
 > 3. **Creates Azure AI Search Index**: Sets up a search index with vector search capabilities
@@ -223,14 +222,14 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
 ## Environment Variable Reference
 
-| Variable                   | Default | Description                                            |
-|----------------------------|---------|--------------------------------------------------------|
-| `COSMOS_SKIP_IF_EXISTS`    | `true`  | Skip import if container already has data             |
-| `COSMOS_FORCE_INGEST`      | `false` | Force re-import even if data exists (overrides skip)  |
-| `COSMOS_DB_ENDPOINT`       | -       | Cosmos DB account endpoint URL                        |
-| `COSMOS_DB_KEY`            | -       | Cosmos DB account key (optional if using AAD)         |
-| `COSMOS_DB_NAME`           | -       | Database name                                         |
-| `COSMOS_DB_CONTAINER_NAME` | -       | Container name for product catalog                    |
+| Variable                   | Default | Description                                           |
+|----------------------------|---------|-------------------------------------------------------|
+| `COSMOS_SKIP_IF_EXISTS`    | `true`  | Skip import if container already has data            |
+| `COSMOS_FORCE_INGEST`      | `false` | Force re-import even if data exists (overrides skip) |
+| `COSMOS_DB_ENDPOINT`       | -       | Cosmos DB account endpoint URL                       |
+| `COSMOS_DB_KEY`            | -       | Cosmos DB account key (optional if using AAD)        |
+| `COSMOS_DB_NAME`          | -       | Database name                                        |
+| `COSMOS_DB_CONTAINER_NAME` | -       | Container name for product catalog                   |
 
 ## Verification
 
