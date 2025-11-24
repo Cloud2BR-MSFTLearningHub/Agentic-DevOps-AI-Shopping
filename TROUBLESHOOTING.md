@@ -11,18 +11,33 @@ Last updated: 2025-11-24
 
 > This guide covers common issues you may encounter when deploying and running this Azure AI Shopping demo application.
 
-## Table of Contents
-- [Python Environment Issues](#python-environment-issues)
-- [Azure Authentication Issues](#azure-authentication-issues)
-- [Cosmos DB Issues](#cosmos-db-issues)
-- [Data Pipeline Issues](#data-pipeline-issues)
-- [Terraform Issues](#terraform-issues)
+<details>
+<summary><b>Table of Content</b> (Click to expand)</summary>
 
----
+- [Python Not Found](#python-not-found)
+- [Virtual Environment Creation Failed](#virtual-environment-creation-failed)
+- [Package Installation Failed](#package-installation-failed)
+- [Not Logged into Azure CLI](#not-logged-into-azure-cli)
+- [AAD Authentication Failed](#aad-authentication-failed)
+- [Local Authorization Disabled Error](#local-authorization-disabled-error)
+- [Connection Timeout](#connection-timeout)
+- [CSV File Not Found](#csv-file-not-found)
+- [CSV Parsing Error](#csv-parsing-error)
+- [Environment File Missing](#environment-file-missing)
+- [Failed to Authenticate to Cosmos DB](#failed-to-authenticate-to-cosmos-db)
+- [Resource Already Exists](#resource-already-exists)
+- [Insufficient Permissions](#insufficient-permissions)
+- [Provider Configuration Error](#provider-configuration-error)
+- [State Lock Error](#state-lock-error)
+- [Enable Verbose Logging](#enable-verbose-logging)
+- [Check Azure Service Health](#check-azure-service-health)
+- [Clean Up and Retry](#clean-up-and-retry)
+- [Still Having Issues?](#still-having-issues)
 
-## Python Environment Issues
+</details>
 
-### Python Not Found
+## Python Not Found
+
 ```
 ERROR: Python is not installed or not in PATH
 ```
@@ -32,7 +47,7 @@ ERROR: Python is not installed or not in PATH
 - Ensure Python is added to your system PATH during installation
 - Verify installation: `python --version`
 
-### Virtual Environment Creation Failed
+## Virtual Environment Creation Failed
 ```
 ERROR: Failed to create virtual environment
 ```
@@ -43,7 +58,7 @@ ERROR: Failed to create virtual environment
 - Check if `python -m venv` works manually: `python -m venv test_venv`
 - On Windows, ensure your execution policy allows script execution
 
-### Package Installation Failed
+## Package Installation Failed
 ```
 ERROR: Could not install packages due to an OSError
 ```
@@ -54,11 +69,8 @@ ERROR: Could not install packages due to an OSError
 - Try installing with `--no-cache-dir`: `pip install --no-cache-dir -r requirements.txt`
 - For Windows + pandas issues, use pre-built wheels by ensuring `pandas>=2.2.2` in requirements.txt
 
----
 
-## Azure Authentication Issues
-
-### Not Logged into Azure CLI
+## Not Logged into Azure CLI
 ```
 ERROR: Please run 'az login' to setup account
 ```
@@ -75,7 +87,7 @@ az account show
 az account set --subscription <subscription-id>
 ```
 
-### AAD Authentication Failed
+## AAD Authentication Failed
 ```
 DefaultAzureCredential failed to retrieve a token
 ```
@@ -86,20 +98,17 @@ DefaultAzureCredential failed to retrieve a token
 3. Verify the resource exists and you have access
 4. Try clearing Azure credentials cache: `az account clear` then `az login` again
 
----
 
-## Cosmos DB Issues
-
-### Local Authorization Disabled Error
+## Local Authorization Disabled Error
 ```
 ERROR: Local Authorization is disabled. Use an AAD token to authorize all requests.
 ```
 
-This error occurs when Cosmos DB requires Azure Active Directory (AAD) authentication instead of key-based authentication.
+> This error occurs when Cosmos DB requires Azure Active Directory (AAD) authentication instead of key-based authentication.
 
 **Common Causes and Solutions**:
 
-#### 1. Not logged into Azure CLI
+- Not logged into Azure CLI
 
 ```powershell
 # Login to Azure CLI
@@ -112,11 +121,11 @@ az account show
 az account set --subscription <subscription-id>
 ```
 
-After logging in, try running the script again.
+> After logging in, try running the script again.
 
-#### 2. Public Network Access Disabled
+- Public Network Access Disabled
 
-If your Cosmos DB has public network access disabled, your local machine or Codespace VM cannot connect.
+> If your Cosmos DB has public network access disabled, your local machine or Codespace VM cannot connect.
 
 **Solution via Azure Portal**:
 - Navigate to your Cosmos DB account in the Azure portal
@@ -134,9 +143,7 @@ az cosmosdb update \
   --enable-public-network true
 ```
 
-#### 3. Insufficient Permissions
-
-Your Azure account needs appropriate role assignments on the Cosmos DB account.
+- Insufficient Permissions: Your Azure account needs appropriate role assignments on the Cosmos DB account.
 
 **Required roles**:
 - `Cosmos DB Built-in Data Contributor` (for read/write access)
@@ -156,7 +163,7 @@ az cosmosdb sql role assignment create \
   --scope "/"
 ```
 
-### Connection Timeout
+## Connection Timeout
 ```
 ERROR: Request timeout
 ```
@@ -167,11 +174,8 @@ ERROR: Request timeout
 - Ensure public network access is enabled (see above)
 - Check if Azure services are experiencing outages: https://status.azure.com/
 
----
 
-## Data Pipeline Issues
-
-### CSV File Not Found
+## CSV File Not Found
 ```
 WARNING: CSV data file not found at data/updated_product_catalog(in).csv
 ```
@@ -183,7 +187,7 @@ Download or place the product catalog CSV file in the `src/data/` directory:
 curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.com/microsoft/TechWorkshop-L300-AI-Apps-and-agents/main/src/data/updated_product_catalog(in).csv
 ```
 
-### CSV Parsing Error
+## CSV Parsing Error
 ```
 ERROR: Error tokenizing data. C error: Expected X fields, saw Y
 ```
@@ -194,7 +198,7 @@ ERROR: Error tokenizing data. C error: Expected X fields, saw Y
 - Verify the CSV has the correct number of columns (6): ProductID, ProductName, ProductCategory, ProductDescription, Price, ImageUrl
 - Try opening the CSV in a text editor to check for formatting issues
 
-### Environment File Missing
+## Environment File Missing
 ```
 ERROR: .env file not found
 ```
@@ -206,7 +210,7 @@ cd terraform-infrastructure
 terraform apply -auto-approve
 ```
 
-### Failed to Authenticate to Cosmos DB
+## Failed to Authenticate to Cosmos DB
 ```
 ERROR: Failed to authenticate to Cosmos DB using DefaultAzureCredential and no valid COSMOS_DB_KEY was provided
 ```
@@ -217,11 +221,7 @@ ERROR: Failed to authenticate to Cosmos DB using DefaultAzureCredential and no v
 - Check that `COSMOS_DB_ENDPOINT` and `COSMOS_DB_KEY` are set correctly in `.env`
 - The script will automatically try AAD authentication first, then fall back to key-based auth
 
----
-
-## Terraform Issues
-
-### Resource Already Exists
+## Resource Already Exists
 ```
 ERROR: A resource with the ID already exists
 ```
@@ -231,7 +231,8 @@ ERROR: A resource with the ID already exists
 - Or destroy and recreate: `terraform destroy` then `terraform apply`
 - Check for resources in other resource groups with the same name
 
-### Insufficient Permissions
+## Insufficient Permissions
+
 ```
 ERROR: The client does not have authorization to perform action
 ```
@@ -241,7 +242,8 @@ ERROR: The client does not have authorization to perform action
 - Check if specific Azure policies are blocking resource creation
 - Contact your Azure administrator to grant necessary permissions
 
-### Provider Configuration Error
+## Provider Configuration Error
+
 ```
 ERROR: Error configuring the backend "azurerm"
 ```
@@ -251,7 +253,8 @@ ERROR: Error configuring the backend "azurerm"
 - Check that the specified subscription exists and you have access
 - Ensure the backend storage account and container exist (if using remote state)
 
-### State Lock Error
+## State Lock Error
+
 ```
 ERROR: Error acquiring the state lock
 ```
@@ -262,13 +265,9 @@ ERROR: Error acquiring the state lock
 terraform force-unlock <lock-id>
 ```
 
-Only force-unlock if you're certain no other Terraform process is running.
+> Only force-unlock if you're certain no other Terraform process is running.
 
----
-
-## General Tips
-
-### Enable Verbose Logging
+## Enable Verbose Logging
 
 For more detailed error information:
 
@@ -290,12 +289,11 @@ export TF_LOG=DEBUG
 terraform apply
 ```
 
-### Check Azure Service Health
+## Check Azure Service Health
 
-If experiencing unexpected issues, check Azure service status:
-- https://status.azure.com/
+> If experiencing unexpected issues, check [Azure service status](https://status.azure.com/)
 
-### Clean Up and Retry
+## Clean Up and Retry
 
 > Sometimes a clean slate helps:
 
@@ -310,8 +308,6 @@ Remove-Item -Recurse -Force .terraform
 terraform init
 terraform apply
 ```
-
----
 
 ## Still Having Issues?
 
