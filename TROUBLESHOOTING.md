@@ -43,39 +43,45 @@ ERROR: Python is not installed or not in PATH
 ```
 
 **Solution**: 
-- Install Python 3.8+ from https://www.python.org/downloads/
+
+- Install Python 3.8+ from <https://www.python.org/downloads/>
 - Ensure Python is added to your system PATH during installation
 - Verify installation: `python --version`
 
 ## Virtual Environment Creation Failed
+
 ```
 ERROR: Failed to create virtual environment
 ```
 
 **Solution**: 
+
 - Ensure you have write permissions to the `src` directory
 - Try deleting existing `venv` folder: `Remove-Item -Recurse -Force venv`
 - Check if `python -m venv` works manually: `python -m venv test_venv`
 - On Windows, ensure your execution policy allows script execution
 
 ## Package Installation Failed
+
 ```
 ERROR: Could not install packages due to an OSError
 ```
 
 **Solution**:
+
 - Update pip: `python -m pip install --upgrade pip`
 - Clear pip cache: `pip cache purge`
 - Try installing with `--no-cache-dir`: `pip install --no-cache-dir -r requirements.txt`
 - For Windows + pandas issues, use pre-built wheels by ensuring `pandas>=2.2.2` in requirements.txt
 
-
 ## Not Logged into Azure CLI
+
 ```
 ERROR: Please run 'az login' to setup account
 ```
 
 **Solution**:
+
 ```powershell
 # Login to Azure CLI
 az login
@@ -88,18 +94,20 @@ az account set --subscription <subscription-id>
 ```
 
 ## AAD Authentication Failed
+
 ```
 DefaultAzureCredential failed to retrieve a token
 ```
 
 **Solution**:
+
 1. Ensure you're logged into Azure CLI: `az login`
 2. Check your account has proper permissions
 3. Verify the resource exists and you have access
 4. Try clearing Azure credentials cache: `az account clear` then `az login` again
 
-
 ## Local Authorization Disabled Error
+
 ```
 ERROR: Local Authorization is disabled. Use an AAD token to authorize all requests.
 ```
@@ -128,6 +136,7 @@ az account set --subscription <subscription-id>
 > If your Cosmos DB has public network access disabled, your local machine or Codespace VM cannot connect.
 
 **Solution via Azure Portal**:
+
 - Navigate to your Cosmos DB account in the Azure portal
 - Select **Networking** from the Settings menu
 - Ensure **Public network access** is set to **All networks**
@@ -136,6 +145,7 @@ az account set --subscription <subscription-id>
 - Try running the script again
 
 **Solution via Azure CLI**:
+
 ```powershell
 az cosmosdb update \
   --name <cosmos-account-name> \
@@ -146,10 +156,12 @@ az cosmosdb update \
 - Insufficient Permissions: Your Azure account needs appropriate role assignments on the Cosmos DB account.
 
 **Required roles**:
+
 - `Cosmos DB Built-in Data Contributor` (for read/write access)
 - Or `Contributor` at the resource group level
 
 **Solution via Azure CLI**:
+
 ```powershell
 # Get your user object ID
 $userId = (az ad signed-in-user show --query id -o tsv)
@@ -164,18 +176,20 @@ az cosmosdb sql role assignment create \
 ```
 
 ## Connection Timeout
+
 ```
 ERROR: Request timeout
 ```
 
 **Solution**:
+
 - Check your network connection
 - Verify Cosmos DB firewall settings allow your IP address
 - Ensure public network access is enabled (see above)
-- Check if Azure services are experiencing outages: https://status.azure.com/
-
+- Check if Azure services are experiencing outages: <https://status.azure.com/>
 
 ## CSV File Not Found
+
 ```
 WARNING: CSV data file not found at data/updated_product_catalog(in).csv
 ```
@@ -188,22 +202,26 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 ```
 
 ## CSV Parsing Error
+
 ```
 ERROR: Error tokenizing data. C error: Expected X fields, saw Y
 ```
 
 **Solution**:
+
 - Ensure CSV fields with commas are properly quoted
 - Check for special characters or encoding issues
 - Verify the CSV has the correct number of columns (6): ProductID, ProductName, ProductCategory, ProductDescription, Price, ImageUrl
 - Try opening the CSV in a text editor to check for formatting issues
 
 ## Environment File Missing
+
 ```
 ERROR: .env file not found
 ```
 
 **Solution**:
+
 ```bash
 # Run Terraform to generate the .env file
 cd terraform-infrastructure
@@ -211,22 +229,26 @@ terraform apply -auto-approve
 ```
 
 ## Failed to Authenticate to Cosmos DB
+
 ```
 ERROR: Failed to authenticate to Cosmos DB using DefaultAzureCredential and no valid COSMOS_DB_KEY was provided
 ```
 
 **Solution**: 
+
 - Ensure your `.env` file is properly generated with correct keys
 - Run `terraform apply` again if needed
 - Check that `COSMOS_DB_ENDPOINT` and `COSMOS_DB_KEY` are set correctly in `.env`
 - The script will automatically try AAD authentication first, then fall back to key-based auth
 
 ## Resource Already Exists
+
 ```
 ERROR: A resource with the ID already exists
 ```
 
 **Solution**:
+
 - Import the existing resource: `terraform import <resource_type>.<name> <azure_resource_id>`
 - Or destroy and recreate: `terraform destroy` then `terraform apply`
 - Check for resources in other resource groups with the same name
@@ -238,6 +260,7 @@ ERROR: The client does not have authorization to perform action
 ```
 
 **Solution**:
+
 - Ensure your Azure account has `Contributor` or `Owner` role on the subscription or resource group
 - Check if specific Azure policies are blocking resource creation
 - Contact your Azure administrator to grant necessary permissions
@@ -249,6 +272,7 @@ ERROR: Error configuring the backend "azurerm"
 ```
 
 **Solution**:
+
 - Verify your Azure credentials are configured: `az login`
 - Check that the specified subscription exists and you have access
 - Ensure the backend storage account and container exist (if using remote state)
@@ -260,6 +284,7 @@ ERROR: Error acquiring the state lock
 ```
 
 **Solution**:
+
 ```bash
 # Force unlock (use with caution)
 terraform force-unlock <lock-id>
@@ -272,18 +297,21 @@ terraform force-unlock <lock-id>
 For more detailed error information:
 
 **Azure CLI**:
+
 ```powershell
 az <command> --debug
 ```
 
 **Python Scripts**:
 Set environment variable before running:
+
 ```powershell
 $env:AZURE_LOG_LEVEL = "DEBUG"
 python pipelines/script.py
 ```
 
 **Terraform**:
+
 ```bash
 export TF_LOG=DEBUG
 terraform apply

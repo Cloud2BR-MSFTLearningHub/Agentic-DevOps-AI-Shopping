@@ -11,7 +11,6 @@ Last updated: 2025-11-24
 
 > This automation handles the complete data pipeline setup for the Azure AI Shopping application.
 
-
 <details>
 <summary><b>Table of Content</b> (Click to expand)</summary>
 
@@ -29,14 +28,13 @@ Last updated: 2025-11-24
 
 </details>
 
-
 > [!NOTE]
 > What It Does? The data pipeline automation performs the following tasks:
+>
 > 1. **Creates Python Virtual Environment**: Sets up an isolated Python environment with all required dependencies
 > 2. **Imports Data to Cosmos DB**: Loads product catalog data from CSV into Cosmos DB container
 > 3. **Creates Azure AI Search Index**: Sets up a search index with vector search capabilities
 > 4. **Imports Data to Search**: Populates the search index from Cosmos DB using an indexer
-
 
 <details>
 <summary><b> Prerequisites: </b> (Click to expand)</summary>
@@ -68,6 +66,7 @@ terraform apply -auto-approve
 ```
 
 This will:
+
 - Deploy all Azure resources
 - Create AI model deployments
 - Generate `.env` file
@@ -76,17 +75,20 @@ This will:
 > Option 2: Run Manually → If you prefer to run the data pipeline manually or separately:
 
 1. **Ensure `.env` file exists** (created by Terraform):
+
    ```bash
    cd terraform-infrastructure
    terraform apply -auto-approve
    ```
 
 2. **Navigate to src directory**:
+
    ```bash
    cd ../src
    ```
 
 3. **Create virtual environment and install dependencies**:
+
    ```powershell
    python -m venv venv
    .\venv\Scripts\Activate.ps1
@@ -95,6 +97,7 @@ This will:
    ```
 
 4. **Run pipeline scripts in order**:
+
    ```powershell
    # Step 1: Import data to Cosmos DB
    python pipelines/ingest_to_cosmos.py
@@ -115,6 +118,7 @@ src/data/updated_product_catalog(in).csv
 ```
 
 > Expected columns:
+
 - `ProductID`: Unique product identifier
 - `ProductName`: Product name
 - `ProductCategory`: Product category
@@ -147,7 +151,6 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 </details>
 
-
 <details>
 <summary><b> pipelines/create_search_index.py </b> (Click to expand)</summary>
 
@@ -157,7 +160,6 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 - Defines searchable and filterable fields
 
 </details>
-
 
 <details>
 <summary><b> pipelines/create_search_index.py </b> (Click to expand)</summary>
@@ -196,7 +198,7 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 > For detailed troubleshooting guidance, see [TROUBLESHOOTING.md](../TROUBLESHOOTING.md). Quick Reference: 
 
-- **Python Not Found**: Install Python 3.8+ from https://www.python.org/downloads/
+- **Python Not Found**: Install Python 3.8+ from <https://www.python.org/downloads/>
 - **CSV File Not Found**: Download the product catalog CSV file and place it in `src/data/` directory
 - **Authentication Errors**: Run `az login` and ensure you have proper permissions. See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#azure-authentication-issues) for detailed solutions.
 - **Virtual Environment Issues**: Delete `venv` folder and recreate. See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#python-environment-issues) for details.
@@ -236,6 +238,7 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 > After running the pipeline, verify data was imported:
 
 ## Check Cosmos DB
+
 ```powershell
 az cosmosdb sql container show \
   --account-name <cosmos-account> \
@@ -245,6 +248,7 @@ az cosmosdb sql container show \
 ```
 
 ## Check Search Index
+
 ```powershell
 az search index show \
   --index-name products-index \
@@ -253,6 +257,7 @@ az search index show \
 ```
 
 ## Query Search Index
+
 ```powershell
 az search index show-statistics \
   --index-name products-index \
