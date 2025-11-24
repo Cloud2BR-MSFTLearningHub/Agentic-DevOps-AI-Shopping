@@ -11,6 +11,25 @@ Last updated: 2025-11-24
 
 > This automation handles the complete data pipeline setup for the Azure AI Shopping application.
 
+
+<details>
+<summary><b>Table of Content</b> (Click to expand)</summary>
+
+- [Usage](#usage)
+- [Data Files](#data-files)
+- [Scripts](#scripts)
+- [Troubleshooting](#troubleshooting)
+- [Configuration](#configuration)
+- [Environment Variable Reference](#environment-variable-reference)
+- [Verification](#verification)
+- [Check Cosmos DB](#check-cosmos-db)
+- [Check Search Index](#check-search-index)
+- [Query Search Index](#query-search-index)
+- [Next Steps](#next-steps)
+
+</details>
+
+
 > [!NOTE]
 > What It Does:
 > The data pipeline automation performs the following tasks:
@@ -202,7 +221,7 @@ AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 ```
 
-### Environment Variable Reference
+## Environment Variable Reference
 
 | Variable                   | Default | Description                                             |
 |----------------------------|---------|--------------------------------------------------------|
@@ -217,7 +236,7 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
 > After running the pipeline, verify data was imported:
 
-### Check Cosmos DB
+## Check Cosmos DB
 ```powershell
 az cosmosdb sql container show \
   --account-name <cosmos-account> \
@@ -226,7 +245,7 @@ az cosmosdb sql container show \
   --resource-group <rg-name>
 ```
 
-### Check Search Index
+## Check Search Index
 ```powershell
 az search index show \
   --index-name products-index \
@@ -234,7 +253,7 @@ az search index show \
   --resource-group <rg-name>
 ```
 
-### Query Search Index
+## Query Search Index
 ```powershell
 az search index show-statistics \
   --index-name products-index \
