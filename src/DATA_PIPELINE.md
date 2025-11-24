@@ -223,14 +223,14 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
 ## Environment Variable Reference
 
-| Variable                   | Default | Description                                             |
+| Variable                   | Default | Description                                            |
 |----------------------------|---------|--------------------------------------------------------|
-| `COSMOS_SKIP_IF_EXISTS`    | `true`  | Skip import if container already has data              |
-| `COSMOS_FORCE_INGEST`      | `false` | Force re-import even if data exists (overrides skip)   |
-| `COSMOS_DB_ENDPOINT`       | -       | Cosmos DB account endpoint URL                         |
-| `COSMOS_DB_KEY`            | -       | Cosmos DB account key (optional if using AAD)          |
-| `COSMOS_DB_NAME`           | -       | Database name                                          |
-| `COSMOS_DB_CONTAINER_NAME` | -       | Container name for product catalog                     |
+| `COSMOS_SKIP_IF_EXISTS`    | `true`  | Skip import if container already has data             |
+| `COSMOS_FORCE_INGEST`      | `false` | Force re-import even if data exists (overrides skip)  |
+| `COSMOS_DB_ENDPOINT`       | -       | Cosmos DB account endpoint URL                        |
+| `COSMOS_DB_KEY`            | -       | Cosmos DB account key (optional if using AAD)         |
+| `COSMOS_DB_NAME`           | -       | Database name                                         |
+| `COSMOS_DB_CONTAINER_NAME` | -       | Container name for product catalog                    |
 
 ## Verification
 
