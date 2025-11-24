@@ -23,8 +23,8 @@ Last updated: 2025-11-24
 <details>
 <summary><b> Prerequisites: </b> (Click to expand)</summary>
 
-- Python 3.8 or higher installed and available in PATH
-- Product catalog CSV file at `src/data/updated_product_catalog(in).csv` (demo)
+> - Python 3.8 or higher installed and available in PATH
+> - Product catalog CSV file at `src/data/updated_product_catalog(in).csv` (demo)
 
 </details>
 
