@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2025-11-24
+Last updated: 2025-11-12
 
 ----------
 
@@ -113,7 +113,6 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 ## Scripts
 
-
 <details>
 <summary><b> pipelines/ingest_to_cosmos.py </b> (Click to expand)</summary>
 
@@ -143,7 +142,6 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 
 <details>
-<details>
 <summary><b> pipelines/create_search_index.py </b> (Click to expand)</summary>
 
 - Creates Azure AI Search index with vector search capabilities
@@ -154,10 +152,8 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 </details>
 
-
 <details>
-<parameter name="oldString"><details>
-<summary><b> pipelines/create_search_index.py </b> (Click to expand)</summary>
+<summary><b>  pipelines/create_search_index.py </b> (Click to expand)</summary>
 
 - Creates Azure AI Search index with vector search
 - Configures HNSW algorithm for vector search
@@ -166,9 +162,8 @@ curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.c
 
 </details>
 
-
 <details>
-<parameter name="newString"><summary><b> pipelines/upload_to_search.py </b> (Click to expand)</summary>
+<summary><b>  pipelines/upload_to_search.py  </b> (Click to expand)</summary>
 
 - Reads all documents from Cosmos DB container
 - Authenticates using AAD or key-based auth (auto-fallback)
@@ -209,14 +204,14 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
 ### Environment Variable Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COSMOS_SKIP_IF_EXISTS` | `true` | Skip import if container already has data |
-| `COSMOS_FORCE_INGEST` | `false` | Force re-import even if data exists (overrides skip) |
-| `COSMOS_DB_ENDPOINT` | - | Cosmos DB account endpoint URL |
-| `COSMOS_DB_KEY` | - | Cosmos DB account key (optional if using AAD) |
-| `COSMOS_DB_NAME` | - | Database name |
-| `COSMOS_DB_CONTAINER_NAME` | - | Container name for product catalog |
+| Variable                   | Default | Description                                             |
+|----------------------------|---------|--------------------------------------------------------|
+| `COSMOS_SKIP_IF_EXISTS`    | `true`  | Skip import if container already has data              |
+| `COSMOS_FORCE_INGEST`      | `false` | Force re-import even if data exists (overrides skip)   |
+| `COSMOS_DB_ENDPOINT`       | -       | Cosmos DB account endpoint URL                         |
+| `COSMOS_DB_KEY`            | -       | Cosmos DB account key (optional if using AAD)          |
+| `COSMOS_DB_NAME`           | -       | Database name                                          |
+| `COSMOS_DB_CONTAINER_NAME` | -       | Container name for product catalog                     |
 
 ## Verification
 
@@ -259,7 +254,7 @@ az search index show-statistics \
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1410-limegreen" alt="Total views">
-  <p>Refresh Date: 2025-11-24</p>
+  <img src="https://img.shields.io/badge/Total%20views-1386-limegreen" alt="Total views">
+  <p>Refresh Date: 2025-11-12</p>
 </div>
 <!-- END BADGE -->
