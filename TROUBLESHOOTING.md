@@ -194,8 +194,7 @@ ERROR: Request timeout
 WARNING: CSV data file not found at data/updated_product_catalog(in).csv
 ```
 
-**Solution**: 
-Download or place the product catalog CSV file in the `src/data/` directory:
+**Solution**: Download or place the product catalog CSV file in the `src/data/` directory:
 
 ```bash
 curl -o src/data/updated_product_catalog(in).csv https://raw.githubusercontent.com/microsoft/TechWorkshop-L300-AI-Apps-and-agents/main/src/data/updated_product_catalog(in).csv
@@ -294,7 +293,7 @@ terraform force-unlock <lock-id>
 
 ## Enable Verbose Logging
 
-For more detailed error information:
+> For more detailed error information:
 
 **Azure CLI**:
 
@@ -302,8 +301,7 @@ For more detailed error information:
 az <command> --debug
 ```
 
-**Python Scripts**:
-Set environment variable before running:
+**Python Scripts**: Set environment variable before running.
 
 ```powershell
 $env:AZURE_LOG_LEVEL = "DEBUG"
