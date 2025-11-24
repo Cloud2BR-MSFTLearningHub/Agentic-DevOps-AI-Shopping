@@ -32,3 +32,10 @@ variable "enable_ai_automation" {
   description = "Whether to run Azure AI Foundry automation steps (model deployments, connections, .env creation)"
   default     = true
 }
+
+variable "enable_data_pipeline" {
+  type        = bool
+  description = "Whether to run data pipeline automation (requires Python and data files)"
+  default     = true
+}
+
