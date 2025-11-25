@@ -277,7 +277,7 @@ az search index show-statistics \
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1410-limegreen" alt="Total views">
-  <p>Refresh Date: 2025-11-24</p>
+  <img src="https://img.shields.io/badge/Total%20views-1543-limegreen" alt="Total views">
+  <p>Refresh Date: 2025-11-25</p>
 </div>
 <!-- END BADGE -->

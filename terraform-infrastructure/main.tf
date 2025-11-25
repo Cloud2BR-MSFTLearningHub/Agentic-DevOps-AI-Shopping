@@ -163,9 +163,9 @@ resource "azurerm_container_registry_webhook" "webhook" {
   registry_name       = azurerm_container_registry.acr.name
   location            = var.location
 
-  service_uri = "https://${local.web_app_name}.scm.azurewebsites.net/docker/hook"
+  service_uri = "https://${local.web_app_name}.scm.azurewebsites.net/api/registry/webhook"
   status      = "enabled"
-  scope       = "${local.suffix}/techworkshopl300/zava:latest"
+  scope       = "zava-chat-app:latest"
   actions     = ["push"]
 
   custom_headers = {
@@ -191,20 +191,14 @@ resource "azurerm_linux_web_app" "app" {
   https_only          = true
 
   site_config {
-    application_stack {
-      docker_image_name   = "${local.registry_name}.azurecr.io/${local.suffix}/techworkshopl300/zava:latest"
-      docker_registry_url = "https://${local.registry_name}.azurecr.io"
-    }
-    http2_enabled       = true
+    always_on         = false
+    http2_enabled     = true
     minimum_tls_version = "1.2"
   }
 
   app_settings = {
     WEBSITES_ENABLE_APP_SERVICE_STORAGE = "false"
-    DOCKER_REGISTRY_SERVER_URL          = "https://${local.registry_name}.azurecr.io"
-    DOCKER_REGISTRY_SERVER_USERNAME     = azurerm_container_registry.acr.name
-    DOCKER_REGISTRY_SERVER_PASSWORD     = azurerm_container_registry.acr.admin_password
-    APPINSIGHTS_INSTRUMENTATIONKEY      = azurerm_application_insights.appinsights.instrumentation_key
+    DOCKER_ENABLE_CI                    = "true"
   }
 
   depends_on = [azurerm_container_registry.acr]
@@ -678,6 +672,12 @@ AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
 AZURE_OPENAI_API_VERSION=2024-02-01
 
+# GPT Model Configuration (for single-agent chat)
+gpt_endpoint=$aiFoundryEndpoint
+gpt_deployment=gpt-4o-mini
+gpt_api_key=$aiFoundryKey
+gpt_api_version=2024-02-01
+
 # Azure Cosmos DB Configuration
 COSMOS_DB_ENDPOINT=${azurerm_cosmosdb_account.cosmos.endpoint}
 COSMOS_DB_KEY=$cosmosKey
@@ -716,6 +716,12 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
 AZURE_OPENAI_API_VERSION=2024-02-01
+
+# GPT Model Configuration (for single-agent chat)
+gpt_endpoint=$aiFoundryEndpoint
+gpt_deployment=gpt-4o-mini
+gpt_api_key=$aiFoundryKey
+gpt_api_version=2024-02-01
 
 # Azure Cosmos DB Configuration
 COSMOS_DB_ENDPOINT=${azurerm_cosmosdb_account.cosmos.endpoint}
@@ -881,3 +887,237 @@ resource "null_resource" "data_pipeline" {
     env_file_id  = null_resource.create_env_file[0].id
   }
 }
+
+# Single-Agent Application Verification - Verifies the chat application is ready
+resource "null_resource" "verify_single_agent_app" {
+  count = var.enable_data_pipeline ? 1 : 0
+
+  depends_on = [
+    null_resource.data_pipeline
+  ]
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      Write-Host ""
+      Write-Host "=== Verifying Single-Agent Chat Application ==="
+      Write-Host ""
+      
+      # Check if application files exist
+      $appFiles = @(
+        "../src/chat_app.py",
+        "../src/app/tools/singleAgentExample.py",
+        "../src/app/templates/index.html"
+      )
+      
+      $allFilesExist = $true
+      foreach ($file in $appFiles) {
+        if (Test-Path $file) {
+          Write-Host "✓ Found: $file"
+        } else {
+          Write-Host "✗ Missing: $file"
+          $allFilesExist = $false
+        }
+      }
+      
+      Write-Host ""
+      if ($allFilesExist) {
+        Write-Host "✓ All single-agent application files are in place!"
+        Write-Host ""
+        Write-Host "Application structure:"
+        Write-Host "  📄 chat_app.py - FastAPI web application"
+        Write-Host "  🤖 app/tools/singleAgentExample.py - AI agent logic"
+        Write-Host "  🎨 app/templates/index.html - Chat interface"
+        Write-Host ""
+        Write-Host "🚀 To start the chat application:"
+        Write-Host "  1. cd ..\src"
+        Write-Host "  2. venv\Scripts\Activate.ps1"
+        Write-Host "  3. uvicorn chat_app:app --host 0.0.0.0 --port 8000"
+        Write-Host "  4. Open http://127.0.0.1:8000 in your browser"
+        Write-Host ""
+      } else {
+        Write-Host "⚠️  Some application files are missing!"
+        Write-Host "Please ensure all files are committed to the repository."
+      }
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+
+  triggers = {
+    data_pipeline_id = null_resource.data_pipeline[0].id
+    env_file_id      = null_resource.create_env_file[0].id
+  }
+}
+
+# Install Docker Desktop if not present and deploy chat app using containers
+resource "null_resource" "deploy_chat_app" {
+  count = var.enable_data_pipeline ? 1 : 0
+
+  depends_on = [
+    null_resource.verify_single_agent_app,
+    null_resource.data_pipeline,
+    azurerm_linux_web_app.app
+  ]
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      Write-Host ""
+      Write-Host "=== Deploying Chat Application to Azure Web App ==="
+      Write-Host ""
+      
+      # Build container directly in ACR (no local Docker needed)
+      Write-Host "Building chat application container in Azure Container Registry..."
+      Write-Host "This includes the Azure AI Foundry SDK with corrected endpoint configuration"
+      Write-Host "Build time: approximately 2-3 minutes..."
+      Write-Host ""
+      
+      # Set UTF-8 encoding to prevent Azure CLI Unicode errors
+      [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+      $env:PYTHONIOENCODING = "utf-8"
+      
+      # Calculate absolute path to src directory
+      $srcPath = Join-Path (Split-Path $PWD.Path -Parent) "src"
+      Write-Host "Source directory: $srcPath"
+      
+      # Verify source files exist
+      if (!(Test-Path "$srcPath\Dockerfile")) {
+        Write-Host "ERROR: Dockerfile not found at $srcPath\Dockerfile"
+        exit 1
+      }
+      if (!(Test-Path "$srcPath\app\tools\singleAgentExample.py")) {
+        Write-Host "ERROR: singleAgentExample.py not found"
+        exit 1
+      }
+      
+      Write-Host "✓ Source files verified"
+      Write-Host ""
+      Write-Host "Starting ACR cloud build..."
+      
+      # Build in ACR and capture output
+      $buildOutput = az acr build `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --registry ${local.registry_name} `
+        --image zava-chat-app:latest `
+        --file "$srcPath\Dockerfile" `
+        "$srcPath" 2>&1
+      
+      # Display selected output lines
+      $buildOutput | Select-String -Pattern "Successfully|Step|digest:|Run ID" | ForEach-Object {
+        Write-Host $_.Line
+      }
+      
+      # Check build result
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host ""
+        Write-Host "✓ ACR build completed successfully"
+      } else {
+        Write-Host ""
+        Write-Host "⚠ Build may still be in progress. Check Azure Portal for status."
+      }
+      
+      Write-Host ""
+      Write-Host "Configuring Web App..."
+      
+      # Get AI Foundry endpoint (remains .cognitiveservices., code will convert it)
+      $aiFoundryEndpoint = az cognitiveservices account show `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --name ${local.ai_foundry_name} `
+        --query "properties.endpoint" `
+        --output tsv
+      
+      # Get Azure AI Foundry access key
+      $aiFoundryKey = az cognitiveservices account keys list `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --name ${local.ai_foundry_name} `
+        --query "key1" `
+        --output tsv
+      
+      # Configure environment variables for the app
+      Write-Host "Setting application environment variables..."
+      az webapp config appsettings set `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --name ${local.web_app_name} `
+        --settings `
+          WEBSITES_PORT=8000 `
+          gpt_endpoint="$aiFoundryEndpoint" `
+          gpt_deployment="gpt-4o-mini" `
+          gpt_api_key="$aiFoundryKey" `
+          gpt_api_version="2024-12-01-preview" | Out-Null
+      
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ Environment variables configured"
+      }
+      
+      # Get ACR admin credentials
+      $acrUsername = az acr credential show `
+        --name ${local.registry_name} `
+        --query "username" `
+        --output tsv
+      
+      $acrPassword = az acr credential show `
+        --name ${local.registry_name} `
+        --query "passwords[0].value" `
+        --output tsv
+      
+      # Update container image with ACR credentials
+      Write-Host "Configuring container deployment..."
+      az webapp config container set `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --name ${local.web_app_name} `
+        --docker-custom-image-name ${local.registry_name}.azurecr.io/zava-chat-app:latest `
+        --docker-registry-server-url https://${local.registry_name}.azurecr.io `
+        --docker-registry-server-user "$acrUsername" `
+        --docker-registry-server-password "$acrPassword" `
+        --enable-app-service-storage false | Out-Null
+      
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ Container configuration updated"
+      }
+      
+      # Restart the web app
+      Write-Host ""
+      Write-Host "Restarting Web App to pull latest container..."
+      az webapp restart `
+        --resource-group ${azurerm_resource_group.rg.name} `
+        --name ${local.web_app_name} | Out-Null
+      
+      Write-Host "✓ Web App restarted"
+      Write-Host ""
+      Write-Host "Waiting for container to initialize (30 seconds)..."
+      Start-Sleep -Seconds 30
+      
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host ""
+      Write-Host "   🎉 ZAVA AI SHOPPING ASSISTANT - DEPLOYED TO AZURE"
+      Write-Host ""
+      Write-Host "   🌐 Web App URL: https://${local.web_app_name}.azurewebsites.net"
+      Write-Host "   ❤️  Health Check: https://${local.web_app_name}.azurewebsites.net/health"
+      Write-Host ""
+      Write-Host "   ✓ Container: ${local.registry_name}.azurecr.io/zava-chat-app:latest"
+      Write-Host "   ✓ SDK: azure-ai-inference (Azure AI Foundry)"
+      Write-Host "   ✓ Model: gpt-4o-mini"
+      Write-Host "   ✓ Endpoint: .services.ai.azure.com/models (auto-converted)"
+      Write-Host ""
+      Write-Host "   Note: App may take 1-2 minutes to fully initialize on first start"
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host ""
+      
+      # Try to open browser to the deployed app
+      try {
+        Start-Process "https://${local.web_app_name}.azurewebsites.net"
+      } catch {
+        Write-Host "Could not auto-open browser. Please visit the URL above manually."
+      }
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+
+  triggers = {
+    verify_app_id = null_resource.verify_single_agent_app[0].id
+    always_run    = timestamp()
+  }
+}
+

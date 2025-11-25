@@ -3,6 +3,9 @@
 *.terraform.lock.hcl
 .terraform.lock.hcl
 *src/.env
+app-logs.zip
+LogFiles
+deploy.log
 
 # .tfstate files
 *.tfstate
