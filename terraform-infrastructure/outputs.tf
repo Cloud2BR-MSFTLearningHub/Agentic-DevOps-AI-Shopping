@@ -76,3 +76,51 @@ output "env_file_location" {
   value       = var.enable_ai_automation ? "../src/.env" : "Not created (AI automation disabled)"
   description = "Location of the generated .env file"
 }
+
+output "chat_application_url" {
+  value       = "http://127.0.0.1:8000"
+  description = "URL to access the Zava AI Shopping Assistant chat application"
+}
+
+output "chat_application_health" {
+  value       = "http://127.0.0.1:8000/health"
+  description = "Health check endpoint for the chat application"
+}
+
+output "application_instructions" {
+  value = <<-EOT
+
+  ============================================================================
+  ZAVA AI SHOPPING ASSISTANT - DEPLOYMENT COMPLETE
+  ============================================================================
+
+  AZURE WEB APP:
+    - App Name: ${azurerm_linux_web_app.app.name}
+    - URL: https://${azurerm_linux_web_app.app.default_hostname}
+    - Health Check: https://${azurerm_linux_web_app.app.default_hostname}/health
+
+  LOCAL TESTING:
+    - URL: http://127.0.0.1:8000
+    - To run locally:
+      cd ../src
+      venv\Scripts\Activate.ps1
+      uvicorn chat_app:app --host 0.0.0.0 --port 8000
+
+  TEST PROMPTS:
+    - "What colors of paint do you have available?"
+    - "Tell me about lattices"
+    - "Where can I find your store?"
+    - "Do you have history books?" (tests scope limits)
+
+  AZURE RESOURCES:
+    - Resource Group: ${azurerm_resource_group.rg.name}
+    - AI Foundry: ${local.ai_foundry_name}
+    - Cosmos DB: ${local.cosmos_account_name}
+    - Search Service: ${local.search_service_name}
+    - Container Registry: ${local.registry_name}
+
+  ============================================================================
+
+  EOT
+  description = "Deployment summary and usage instructions"
+}
