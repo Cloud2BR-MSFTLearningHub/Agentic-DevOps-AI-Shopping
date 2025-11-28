@@ -39,3 +39,9 @@ variable "enable_data_pipeline" {
   default     = true
 }
 
+variable "enable_multi_agent" {
+  type        = bool
+  description = "Whether to deploy multi-agent architecture in Microsoft Foundry"
+  default     = true
+}
+

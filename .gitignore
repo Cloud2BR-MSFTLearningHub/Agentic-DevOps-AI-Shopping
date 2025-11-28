@@ -6,6 +6,8 @@
 app-logs.zip
 LogFiles
 deploy.log
+__pycache__
+*.log 
 
 # .tfstate files
 *.tfstate

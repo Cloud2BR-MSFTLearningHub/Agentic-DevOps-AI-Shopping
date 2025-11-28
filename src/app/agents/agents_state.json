@@ -1,0 +1,27 @@
+{
+  "cora": {
+    "id": "asst_xPTPWSqJrKKTxhweUZMwXxNb",
+    "hash": "ec1323afb9692d92de14373b05eb60026bb3738f5fb3303976f74d5c40536092",
+    "status": "created"
+  },
+  "interior_designer": {
+    "id": "asst_6YVlwwf9MRv91UCEZhKXYggr",
+    "hash": "0fbee2d10b87eee5a9d0bd87a9d7af60f327c9093edd47d8e6683505db5aabba",
+    "status": "created"
+  },
+  "inventory_agent": {
+    "id": "asst_cFo2Nh5ncBmw9ZimlOkzBITv",
+    "hash": "87deafceb6532b78ef075dd0e084909c4177286a0808cb9755c9a289f0076ba3",
+    "status": "created"
+  },
+  "customer_loyalty": {
+    "id": "asst_4yiWqVI0AyJ46yKFwpnNjRrS",
+    "hash": "1e0ffd8c5b4dac8cd247b90966b513f89b5c1c366edd476ca164d27b86dc276c",
+    "status": "created"
+  },
+  "cart_manager": {
+    "id": "asst_QChARJsqcQrWKLRhOUt7ojOG",
+    "hash": "bd3985311b2b5e0d4d88ae4583c5c3b36113d6ddbbee67e6d36924f34292ccab",
+    "status": "created"
+  }
+}
