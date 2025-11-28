@@ -34,8 +34,18 @@ app = FastAPI(title="Zava AI Shopping Assistant")
 # Mount templates
 templates = Jinja2Templates(directory="app/templates")
 
-# Initialize handoff service for multi-agent routing
-handoff_service = HandoffService()
+# Lazy initialization for handoff service
+_handoff_service = None
+
+def get_handoff_service():
+    global _handoff_service
+    if _handoff_service is None:
+        try:
+            _handoff_service = HandoffService()
+        except Exception as e:
+            logger.error(f"Failed to initialize HandoffService: {e}")
+            return None
+    return _handoff_service
 
 # Fast JSON serialization
 def fast_json_dumps(obj):
@@ -164,10 +174,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     # === MULTI-AGENT MODE ===
                     
                     # Step 1: Classify intent
-                    classification = handoff_service.classify_intent(
-                        user_message=user_message,
-                        conversation_history=conversation_history
-                    )
+                    svc = get_handoff_service()
+                    if not svc:
+                        logger.warning("HandoffService unavailable; defaulting to 'cora'")
+                        classification = {"domain": "cora", "confidence": 1.0, "reasoning": "HandoffService unavailable"}
+                    else:
+                        classification = svc.classify_intent(
+                            user_message=user_message,
+                            conversation_history=conversation_history
+                        )
                     
                     domain = classification["domain"]
                     logger.info(f"Classified as domain: {domain} (confidence: {classification['confidence']})")
