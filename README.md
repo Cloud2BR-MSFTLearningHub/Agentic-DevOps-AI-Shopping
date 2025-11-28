@@ -19,7 +19,6 @@ Last updated: 2025-11-12
 
 - **Multi-Agent Architecture**: Few specialized AI agents working in concert:
   - **Cora (Shopper)**: Front-facing assistant for general queries.
-  - **Interior Designer**: Provides style advice and generates images (DALL-E 3).
   - **Inventory Manager**: Checks stock availability.
   - **Customer Loyalty**: Manages rewards and discounts.
   - **Cart Manager**: Handles shopping cart operations.
