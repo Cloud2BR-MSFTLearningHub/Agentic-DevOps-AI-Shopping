@@ -290,6 +290,12 @@ resource "azurerm_linux_web_app" "app" {
     always_on         = false
     http2_enabled     = true
     minimum_tls_version = "1.2"
+    application_stack {
+      docker_image_name        = "zava-chat-app:latest"
+      docker_registry_url      = "https://${local.registry_name}.azurecr.io"
+      docker_registry_username = azurerm_container_registry.acr.admin_username
+      docker_registry_password = azurerm_container_registry.acr.admin_password
+    }
   }
 
   app_settings = {
