@@ -13,4 +13,5 @@ COPY . .
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "chat_app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Multi-agent entrypoint (falls back internally if multi disabled)
+CMD ["uvicorn", "chat_app_multi_agent:app", "--host", "0.0.0.0", "--port", "8000"]

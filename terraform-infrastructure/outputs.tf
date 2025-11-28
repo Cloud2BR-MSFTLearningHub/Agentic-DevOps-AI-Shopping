@@ -64,6 +64,56 @@ output "ai_foundry_endpoint" {
   description = "Azure AI Foundry endpoint URL"
 }
 
+# Real agent IDs & statuses (external data source from agents_state.json)
+output "agent_ids" {
+  value = {
+    for k, v in data.external.agents_state.result :
+    k => v if length(regexall("_id$", k)) > 0
+  }
+  description = "Map of agent environment variable names to their resolved IDs"
+}
+
+output "agent_statuses" {
+  value = {
+    for k, v in data.external.agents_state.result :
+    k => v if length(regexall("_status$", k)) > 0
+  }
+  description = "Map of agent environment variable names to provisioning statuses (created/existing/updated/etc.)"
+}
+
+output "key_vault_name" {
+  value       = azurerm_key_vault.kv.name
+  description = "Name of the Key Vault used for secret storage"
+}
+
+output "key_vault_uri" {
+  value       = azurerm_key_vault.kv.vault_uri
+  description = "Base URI of the Key Vault"
+}
+
+# === Real Agent Outputs (ochartarotr) ===
+# NOTE: Commented out - Azure Agents API not yet available via ARM/Terraform
+# output "cora_agent_id" {
+#   value       = azapi_resource.cora_agent.id
+#   description = "Cora agent resource ID"
+# }
+# output "interior_design_agent_id" {
+#   value       = azapi_resource.interior_design_agent.id
+#   description = "Interior Designer agent resource ID"
+# }
+# output "inventory_agent_id" {
+#   value       = azapi_resource.inventory_agent.id
+#   description = "Inventory Manager agent resource ID"
+# }
+# output "customer_loyalty_agent_id" {
+#   value       = azapi_resource.customer_loyalty_agent.id
+#   description = "Customer Loyalty agent resource ID"
+# }
+# output "cart_manager_agent_id" {
+#   value       = azapi_resource.cart_manager_agent.id
+#   description = "Cart Manager agent resource ID"
+# }
+
 output "deployed_models" {
   value = var.enable_ai_automation ? [
     "gpt-4o-mini",
