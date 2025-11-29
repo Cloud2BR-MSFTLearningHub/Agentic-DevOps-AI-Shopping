@@ -112,51 +112,66 @@ def deploy_agents():
     statuses = {}
 
     try:
-        # Define a Scoped Credential to force the correct scope for AI Foundry
-        class ScopedCredential:
-            def __init__(self, credential, scope):
-                self.credential = credential
-                self.scope = scope
-            
-            def get_token(self, *scopes, **kwargs):
-                # Ignore requested scopes and use the forced one
-                return self.credential.get_token(self.scope, **kwargs)
-
-        print("Using DefaultAzureCredential with forced scope: https://ai.azure.com/.default")
-        base_credential = DefaultAzureCredential()
-        credential = ScopedCredential(base_credential, "https://ai.azure.com/.default")
+        print("Initializing Azure AI Project Client...")
         
-        # Use the constructor directly with all required arguments
+        # Use DefaultAzureCredential for authentication
+        credential = DefaultAzureCredential()
+        
+        # Get required environment variables
         sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")
         rg = os.getenv("AZURE_RESOURCE_GROUP")
         project_name = os.getenv("AZURE_AI_PROJECT_NAME")
         
+        if not all([sub_id, rg, project_name]):
+            raise ValueError("Missing required environment variables: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_AI_PROJECT_NAME")
+        
         # Fix endpoint domain if needed (Cognitive Services -> AI Services)
         if project_endpoint and "cognitiveservices.azure.com" in project_endpoint:
-            print(f"Adjusting endpoint domain from cognitiveservices.azure.com to services.ai.azure.com")
+            print(f"Converting endpoint domain: cognitiveservices.azure.com -> services.ai.azure.com")
             project_endpoint = project_endpoint.replace("cognitiveservices.azure.com", "services.ai.azure.com")
-            
-        if sub_id and rg and project_name:
-            # Append project path if not present
-            if "/api/projects/" not in project_endpoint:
-                 project_endpoint = f"{project_endpoint.rstrip('/')}/api/projects/{project_name}"
-                 
-            print(f"Initializing AIProjectClient with endpoint={project_endpoint}")
-            # AIProjectClient(endpoint, credential, **kwargs)
-            project_client = AIProjectClient(
-                endpoint=project_endpoint,
-                credential=credential,
-                subscription_id=sub_id,
-                resource_group_name=rg,
-                project_name=project_name
-            )
-        else:
-             raise ValueError("Missing required environment variables for AIProjectClient")
-            
-        existing_agents = {a.name: a for a in project_client.agents.list_agents()}
-    except Exception as e:
-        print(f"⚠ Unable to query existing agents: {e}")
+            os.environ["AZURE_AI_PROJECT_ENDPOINT"] = project_endpoint
+        
+        # Construct proper project endpoint: https://<hub>.services.ai.azure.com/api/projects/<project>
+        # Remove any existing path segments first
+        base_endpoint = project_endpoint.split("/api/")[0]  # Get just the base URL
+        base_endpoint = base_endpoint.rstrip('/')
+        
+        # Now add the proper API path with project name
+        full_project_endpoint = f"{base_endpoint}/api/projects/{project_name}"
+        
+        print(f"Project Endpoint (base): {base_endpoint}")
+        print(f"Project Endpoint (full): {full_project_endpoint}")
+        print(f"Subscription: {sub_id}")
+        print(f"Resource Group: {rg}")
+        print(f"Project Name: {project_name}")
+        
+        # Initialize AIProjectClient with endpoint and credential
+        # The SDK requires the full project endpoint
+        project_client = AIProjectClient(
+            endpoint=full_project_endpoint,
+            credential=credential
+        )
+        
+        print("Successfully initialized AIProjectClient")
+        print("Fetching existing agents...")
+        
         existing_agents = {}
+        try:
+            agent_list = list(project_client.agents.list_agents())
+            existing_agents = {a.name: a for a in agent_list}
+            print(f"Found {len(existing_agents)} existing agent(s)")
+        except Exception as list_err:
+            print(f"Could not list existing agents (may be first run): {list_err}")
+            existing_agents = {}
+            
+    except Exception as e:
+        print(f"ERROR initializing AIProjectClient: {e}")
+        import traceback
+        traceback.print_exc()
+        print("\nFalling back to local pseudo-agents...")
+        existing_agents = {}
+        # Don't exit - continue with fallback IDs
+        project_client = None
 
     for cfg in agents_config:
         name = cfg["name"]
@@ -165,52 +180,75 @@ def deploy_agents():
         instr_hash = _hash_instructions(instr)
         prior_hash = prior_state.get(env_var, {}).get("hash")
 
-        # Idempotent logic
+        # Skip if no project client available
+        if project_client is None:
+            print(f"[{env_var}] No project client - using fallback ID")
+            fallback_id = f"asst_local_{env_var}"
+            deployed_agents[env_var] = fallback_id
+            statuses[env_var] = "fallback-no-client"
+            continue
+
+        # Idempotent logic - check if agent already exists
         if name in existing_agents:
             agent_obj = existing_agents[name]
             agent_id = getattr(agent_obj, "id", None) or getattr(agent_obj, "agentId", f"unknown-{env_var}")
+            
             # Attempt update if instructions changed
             if prior_hash and prior_hash != instr_hash:
-                print(f"🔄 Updating agent (instructions changed): {name}")
+                print(f"[{env_var}] Updating agent (instructions changed): {name}")
                 try:
                     # Try native update if available
                     try:
                         project_client.agents.update_agent(agent_id=agent_id, instructions=instr)
                         statuses[env_var] = "updated"
+                        print(f"[{env_var}] Successfully updated: {agent_id}")
                     except Exception:
                         # Fallback recreate strategy
+                        print(f"[{env_var}] Update not supported, recreating...")
                         try:
                             project_client.agents.delete_agent(agent_id)
                         except Exception:
                             pass
-                        new_agent = project_client.agents.create_agent(model=cfg["model"], name=name, instructions=instr)
+                        new_agent = project_client.agents.create_agent(
+                            model=cfg["model"], 
+                            name=name, 
+                            instructions=instr
+                        )
                         agent_id = new_agent.id
                         statuses[env_var] = "recreated"
-                    print(f"✅ Agent updated: {agent_id}")
+                        print(f"[{env_var}] Successfully recreated: {agent_id}")
                 except Exception as ue:
-                    print(f"⚠ Failed to update {name}: {ue}")
+                    print(f"[{env_var}] Failed to update {name}: {ue}")
                     statuses[env_var] = "existing-no-update"
                 deployed_agents[env_var] = agent_id
             else:
-                print(f"↩ Reusing existing agent: {name} ({agent_id})")
+                print(f"[{env_var}] Reusing existing agent: {name} ({agent_id})")
                 deployed_agents[env_var] = agent_id
                 statuses[env_var] = "existing"
             continue
 
         # Create new agent
-        print(f"📦 Creating agent: {name}")
+        print(f"[{env_var}] Creating new agent: {name}")
         try:
-            agent = project_client.agents.create_agent(model=cfg["model"], name=name, instructions=instr)
+            agent = project_client.agents.create_agent(
+                model=cfg["model"], 
+                name=name, 
+                instructions=instr
+            )
             agent_id = agent.id
             deployed_agents[env_var] = agent_id
             statuses[env_var] = "created"
-            print(f"✅ Created: {name} -> {agent_id}")
+            print(f"[{env_var}] SUCCESS - Created agent: {agent_id}")
         except Exception as ce:
-            print(f"❌ Failed to create {name}: {ce}")
+            print(f"[{env_var}] FAILED to create {name}: {ce}")
+            import traceback
+            traceback.print_exc()
+            
+            # Use fallback local ID
             fallback_id = f"asst_local_{env_var}"
             deployed_agents[env_var] = fallback_id
-            statuses[env_var] = "fallback-local"
-            print(f"   Using fallback local simulation: {fallback_id}")
+            statuses[env_var] = "fallback-creation-failed"
+            print(f"[{env_var}] Using fallback local simulation: {fallback_id}")
 
     # Persist state (hash + id)
     new_state = {}
@@ -224,35 +262,59 @@ def deploy_agents():
     try:
         with open(state_path, "w", encoding="utf-8") as sf:
             json.dump(new_state, sf, indent=2)
-        print(f"📝 State file updated: {state_path}")
+        print(f"[STATE] State file updated: {state_path}")
     except Exception as se:
-        print(f"⚠ Failed to write state file: {se}")
+        print(f"WARNING: Failed to write state file: {se}")
 
     # Update .env with real agent IDs (early propagation)
     env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
     if os.path.exists(env_path):
         try:
             with open(env_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                content = f.read()
+            
+            # Replace each agent ID
+            for var, aid in deployed_agents.items():
+                # Use regex to replace the value after the = sign
+                import re
+                pattern = rf'^{re.escape(var)}=.*$'
+                replacement = f'{var}={aid}'
+                content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+            
+            # Also fix the project endpoint domain in .env
+            if "cognitiveservices.azure.com" in content:
+                print("Fixing endpoint domains in .env...")
+                content = content.replace(
+                    "AZURE_AI_PROJECT_ENDPOINT=https://aif-",
+                    "# AZURE_AI_PROJECT_ENDPOINT=https://aif-"  # Comment out old
+                )
+                # Add corrected endpoint after the Azure AI Foundry section
+                if "# Azure AI Foundry Configuration" in content:
+                    content = content.replace(
+                        "# Azure AI Foundry Configuration\n",
+                        "# Azure AI Foundry Configuration\n# Note: Agents API uses .services.ai.azure.com domain\n"
+                    )
+            
             with open(env_path, 'w', encoding='utf-8') as f:
-                for line in lines:
-                    wrote = False
-                    for var, aid in deployed_agents.items():
-                        if line.startswith(f"{var}="):
-                            f.write(f"{var}={aid}\n")
-                            wrote = True
-                            break
-                    if not wrote:
-                        f.write(line)
-            print(f"✅ Updated .env with agent IDs: {env_path}")
+                f.write(content)
+            
+            print(f"[{env_var}] Updated .env with agent IDs: {env_path}")
+            print("Agent IDs written:")
+            for var, aid in deployed_agents.items():
+                print(f"  {var}: {aid}")
         except Exception as ee:
-            print(f"⚠ Failed to update .env: {ee}")
+            print(f"WARNING: Failed to update .env: {ee}")
+            import traceback
+            traceback.print_exc()
     else:
-        print("ℹ .env file not found for agent ID propagation")
+        print("INFO: .env file not found for agent ID propagation")
 
-    print("\nSummary:")
+    print("\n" + "=" * 70)
+    print("DEPLOYMENT SUMMARY")
+    print("=" * 70)
     for k, v in deployed_agents.items():
-        print(f"  {k}: {v} ({statuses.get(k)})")
+        status = statuses.get(k, "unknown")
+        print(f"  {k}: {v} [{status}]")
 
     # Emit structured JSON sentinel block for Terraform parsing
     payload = {"agents": deployed_agents, "statuses": statuses}

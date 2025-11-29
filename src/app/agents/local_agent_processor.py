@@ -119,7 +119,7 @@ class LocalAgentProcessor:
                         result['image_url'] = image_result['blob_url'] or image_result['image_url']
                         result['image_prompt'] = image_result['prompt']
                         # Append image info to answer
-                        result['answer'] = f"{answer}\n\n🖼️ I've generated a visualization for you!"
+                        result['answer'] = f"{answer}\n\n[IMAGE] I've generated a visualization for you!"
             except Exception as e:
                 # Don't fail the whole request if image generation fails
                 result['answer'] = f"{answer}\n\n(Note: Image generation unavailable at the moment)"

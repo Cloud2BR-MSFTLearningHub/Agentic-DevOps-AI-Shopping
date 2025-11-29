@@ -231,6 +231,10 @@ resource "azurerm_log_analytics_workspace" "law" {
   sku                 = "PerGB2018"
   retention_in_days   = 90
   daily_quota_gb      = 1
+  
+  depends_on = [
+    azurerm_resource_group.rg
+  ]
 }
 
 resource "azurerm_application_insights" "appinsights" {
@@ -239,6 +243,17 @@ resource "azurerm_application_insights" "appinsights" {
   resource_group_name = azurerm_resource_group.rg.name
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.law.id
+  
+  lifecycle {
+    ignore_changes = [
+      tags
+    ]
+  }
+  
+  depends_on = [
+    azurerm_resource_group.rg,
+    azurerm_log_analytics_workspace.law
+  ]
 }
 
 resource "azurerm_container_registry" "acr" {
@@ -247,6 +262,10 @@ resource "azurerm_container_registry" "acr" {
   location            = var.location
   sku                 = "Standard"
   admin_enabled       = true
+  
+  depends_on = [
+    azurerm_resource_group.rg
+  ]
 }
 
 resource "azurerm_container_registry_webhook" "webhook" {
@@ -329,13 +348,13 @@ resource "azurerm_linux_web_app" "app" {
     COSMOS_DB_KEY                       = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : "AAD_AUTH"
     STORAGE_CONNECTION_STRING           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
-    # Multi-Agent Configuration (initial local simulation; real IDs override post-deploy)
+    # Multi-Agent Configuration - Real agent IDs from deployment
     USE_MULTI_AGENT                     = var.enable_multi_agent ? "true" : "false"
-    cora                                = "asst_local_cora"
-    interior_designer                   = "asst_local_interior_design"
-    inventory_agent                     = "asst_local_inventory"
-    customer_loyalty                    = "asst_local_customer_loyalty"
-    cart_manager                        = "asst_local_cart_manager"
+    cora                                = try(jsondecode(file("${path.module}/agent_ids.json")).cora, "asst_local_cora")
+    interior_designer                   = try(jsondecode(file("${path.module}/agent_ids.json")).interior_designer, "asst_local_interior_design")
+    inventory_agent                     = try(jsondecode(file("${path.module}/agent_ids.json")).inventory_agent, "asst_local_inventory")
+    customer_loyalty                    = try(jsondecode(file("${path.module}/agent_ids.json")).customer_loyalty, "asst_local_customer_loyalty")
+    cart_manager                        = try(jsondecode(file("${path.module}/agent_ids.json")).cart_manager, "asst_local_cart_manager")
     CUSTOMER_ID                         = "CUST001"
   }
 
@@ -412,7 +431,7 @@ resource "null_resource" "update_storage_connection_secret" {
       Write-Host "Updating storage-connection-string secret value..."
       $conn = az storage account show-connection-string --resource-group ${azurerm_resource_group.rg.name} --name ${local.storage_account} --query connectionString -o tsv
       az keyvault secret set --vault-name ${azurerm_key_vault.kv.name} --name storage-connection-string --value $conn | Out-Null
-      Write-Host "✓ storage-connection-string secret updated"
+      Write-Host "[OK] storage-connection-string secret updated"
     EOT
     interpreter = ["PowerShell", "-Command"]
   }
@@ -1063,7 +1082,7 @@ resource "null_resource" "verify_connections" {
       az rest --method GET --url "https://management.azure.com/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${azurerm_resource_group.rg.name}/providers/Microsoft.CognitiveServices/accounts/${local.ai_foundry_name}/connections?api-version=2025-06-01" --query "value[].{Name:name,Type:properties.connectionType,Target:properties.target}" --output table
       
       Write-Host ""
-      Write-Host "✓ Microsoft Foundry project connections verification completed!"
+      Write-Host "[OK] Microsoft Foundry project connections verification completed!"
       Write-Host ""
       Write-Host "Available connections:"
       Write-Host "  - Storage Account: ${local.storage_account}"
@@ -1105,12 +1124,20 @@ resource "null_resource" "create_env_file" {
         New-Item -ItemType Directory -Path "../src" -Force
       }
       
-      # Get Azure AI Foundry endpoint
-      $aiFoundryEndpoint = az cognitiveservices account show `
+      # Get Azure AI Foundry endpoint and fix domain for Agents API
+      $rawAiFoundryEndpoint = az cognitiveservices account show `
         --resource-group "${azurerm_resource_group.rg.name}" `
         --name "${local.ai_foundry_name}" `
         --query "properties.endpoint" `
         --output tsv
+      
+      # For OpenAI models, use the cognitive services endpoint
+      $openAiEndpoint = $rawAiFoundryEndpoint
+      # For Agents API, use the corrected services.ai.azure.com domain
+      $agentsEndpoint = $rawAiFoundryEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      
+      Write-Host "OpenAI Endpoint: $openAiEndpoint"
+      Write-Host "Agents API Endpoint: $agentsEndpoint"
       
       # Fetch secrets from Key Vault for local dev (avoid embedding in Terraform state)
       $kv = "${azurerm_key_vault.kv.name}"
@@ -1125,22 +1152,22 @@ resource "null_resource" "create_env_file" {
       if ($phi4Available) {
         $envContent = @"
 # Azure AI Foundry Configuration
-AZURE_AI_FOUNDRY_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_FOUNDRY_ENDPOINT=$openAiEndpoint
 AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
 AZURE_AI_PROJECT_NAME=${local.ai_project_name}
-AZURE_AI_AGENT_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_AGENT_ENDPOINT=$agentsEndpoint
 
 # Azure OpenAI Model Deployments
 AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_OPENAI_PHI_DEPLOYMENT=phi-4
 AZURE_OPENAI_IMAGE_DEPLOYMENT=dall-e-3
-AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
+AZURE_OPENAI_ENDPOINT=$openAiEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
 AZURE_OPENAI_API_VERSION=2024-02-01
 
 # GPT Model Configuration (for single-agent chat)
-gpt_endpoint=$aiFoundryEndpoint
+gpt_endpoint=$openAiEndpoint
 gpt_deployment=gpt-4o-mini
 gpt_api_key=$aiFoundryKey
 gpt_api_version=2024-02-01
@@ -1172,10 +1199,10 @@ AZURE_LOCATION=${var.location}
 
 # Multi-Agent Configuration
 USE_MULTI_AGENT=true
-AZURE_AI_PROJECT_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_PROJECT_ENDPOINT=$agentsEndpoint
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=gpt-4o-mini
 
-# Local Pseudo Agent IDs (no remote provisioning required)
+# Agent IDs (will be updated by deploy_real_agents.py after creation)
 cora=asst_local_cora
 interior_designer=asst_local_interior_design
 inventory_agent=asst_local_inventory
@@ -1188,7 +1215,7 @@ CUSTOMER_ID=CUST001
       } else {
         $envContent = @"
 # Azure AI Foundry Configuration
-AZURE_AI_FOUNDRY_ENDPOINT=$aiFoundryEndpoint
+AZURE_AI_FOUNDRY_ENDPOINT=$openAiEndpoint
 AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
 AZURE_AI_PROJECT_NAME=${local.ai_project_name}
 AZURE_AI_AGENT_ENDPOINT=$aiFoundryEndpoint
@@ -1197,12 +1224,12 @@ AZURE_AI_AGENT_ENDPOINT=$aiFoundryEndpoint
 AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_OPENAI_IMAGE_DEPLOYMENT=dall-e-3
-AZURE_OPENAI_ENDPOINT=$aiFoundryEndpoint
+AZURE_OPENAI_ENDPOINT=$openAiEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
 AZURE_OPENAI_API_VERSION=2024-02-01
 
 # GPT Model Configuration (for single-agent chat)
-gpt_endpoint=$aiFoundryEndpoint
+gpt_endpoint=$openAiEndpoint
 gpt_deployment=gpt-4o-mini
 gpt_api_key=$aiFoundryKey
 gpt_api_version=2024-02-01
@@ -1437,7 +1464,7 @@ resource "null_resource" "verify_single_agent_app" {
       $allFilesExist = $true
       foreach ($file in $appFiles) {
         if (Test-Path $file) {
-          Write-Host "✓ Found: $file"
+          Write-Host "[OK] Found: $file"
         } else {
           Write-Host "✗ Missing: $file"
           $allFilesExist = $false
@@ -1446,21 +1473,21 @@ resource "null_resource" "verify_single_agent_app" {
       
       Write-Host ""
       if ($allFilesExist) {
-        Write-Host "✓ All single-agent application files are in place!"
+        Write-Host "[OK] All single-agent application files are in place!"
         Write-Host ""
         Write-Host "Application structure:"
         Write-Host "  📄 chat_app.py - FastAPI web application"
-        Write-Host "  🤖 app/tools/singleAgentExample.py - AI agent logic"
-        Write-Host "  🎨 app/templates/index.html - Chat interface"
+        Write-Host "  [APP] app/tools/singleAgentExample.py - AI agent logic"
+        Write-Host "  [UI] app/templates/index.html - Chat interface"
         Write-Host ""
-        Write-Host "🚀 To start the chat application:"
+        Write-Host "To start the chat application:"
         Write-Host "  1. cd ..\src"
         Write-Host "  2. venv\Scripts\Activate.ps1"
         Write-Host "  3. uvicorn chat_app:app --host 0.0.0.0 --port 8000"
         Write-Host "  4. Open http://127.0.0.1:8000 in your browser"
         Write-Host ""
       } else {
-        Write-Host "⚠️  Some application files are missing!"
+        Write-Host "WARNING:  Some application files are missing!"
         Write-Host "Please ensure all files are committed to the repository."
       }
     EOT
@@ -1500,23 +1527,27 @@ resource "null_resource" "deploy_multi_agents" {
       & $pythonCmd -m pip install -q azure-ai-projects azure-identity python-dotenv
       
       if ($LASTEXITCODE -ne 0) {
-        Write-Host "❌ Failed to install required packages"
+        Write-Host "ERROR: Failed to install required packages"
         Write-Host "Falling back to local pseudo-agents..."
         exit 0
       }
       
-      Write-Host "✓ SDK packages installed"
+      Write-Host "[OK] SDK packages installed"
       Write-Host ""
       
-      # Set up environment for agent deployment
-      $env:AZURE_AI_PROJECT_ENDPOINT = "${azapi_resource.ai_foundry.output}" | ConvertFrom-Json | Select-Object -ExpandProperty properties | Select-Object -ExpandProperty endpoint
+      # Set up environment for agent deployment with corrected endpoint
+      $rawEndpoint = "${azapi_resource.ai_foundry.output}" | ConvertFrom-Json | Select-Object -ExpandProperty properties | Select-Object -ExpandProperty endpoint
+      # Fix domain for agents API
+      $agentEndpoint = $rawEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $env:AZURE_AI_PROJECT_ENDPOINT = $agentEndpoint
+      Write-Host "Using Agents API endpoint: $agentEndpoint"
       
       # Deploy agents using Python script
       Write-Host "Deploying 5 agents to Azure AI Foundry..."
       $agentScriptPath = Join-Path (Split-Path $PWD.Path -Parent) "src\app\agents\deploy_real_agents.py"
       
       if (!(Test-Path $agentScriptPath)) {
-        Write-Host "❌ Agent deployment script not found: $agentScriptPath"
+        Write-Host "ERROR: Agent deployment script not found: $agentScriptPath"
         Write-Host "Falling back to local pseudo-agents..."
         exit 0
       }
@@ -1525,11 +1556,11 @@ resource "null_resource" "deploy_multi_agents" {
       & $pythonCmd $agentScriptPath
       
       if ($LASTEXITCODE -ne 0) {
-        Write-Host "⚠️  Agent deployment script reported errors, but continuing..."
+        Write-Host "WARNING:  Agent deployment script reported errors, but continuing..."
         Write-Host "Check if agents were partially created in Foundry portal"
       } else {
         Write-Host ""
-        Write-Host "✅ Real agents successfully created in Microsoft Foundry!"
+        Write-Host "[SUCCESS] Real agents successfully created in Microsoft Foundry!"
         Write-Host ""
         Write-Host "View your agents at:"
         Write-Host "  https://ai.azure.com/build/agents?wsid=/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${azurerm_resource_group.rg.name}/providers/Microsoft.CognitiveServices/accounts/${local.ai_foundry_name}"
@@ -1557,10 +1588,10 @@ resource "null_resource" "deploy_multi_agents" {
               --resource-group ${azurerm_resource_group.rg.name} `
               --name ${local.web_app_name} `
               --settings $settingsArgs | Out-Null
-            Write-Host "✓ Web App app settings updated with real agent IDs"
+            Write-Host "[OK] Web App app settings updated with real agent IDs"
             Write-Host "Restarting Web App to apply settings..."
             az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-            Write-Host "✓ Web App restarted"
+            Write-Host "[OK] Web App restarted"
           } else {
             Write-Host "No real agent IDs found to update (still using local simulation)."
           }
@@ -1575,19 +1606,44 @@ resource "null_resource" "deploy_multi_agents" {
       $srcPath = "src"
       [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
       $env:PYTHONIOENCODING = "utf-8"
-      az acr build `
+      
+      Write-Host "Building container image in Azure Container Registry..."
+      Write-Host "This may take 2-3 minutes. Checking status via ACR task logs..."
+      
+      # Start build and get run ID (ignore encoding errors in output)
+      $buildOutput = az acr build `
         --resource-group ${azurerm_resource_group.rg.name} `
         --registry ${local.registry_name} `
         --image zava-chat-app:latest `
         --file "$srcPath\Dockerfile" `
-        "$srcPath" 2>&1 | Select-String -Pattern "Successfully|Step|digest:|Run ID" | ForEach-Object { Write-Host $_.Line }
-      if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Container build completed"
-        Write-Host "Restarting Web App..."
-        az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-        Write-Host "✓ Web App restarted"
+        --no-logs `
+        "$srcPath" 2>&1 | Out-String
+      
+      # Extract run ID from output
+      if ($buildOutput -match "Run ID: (\w+)") {
+        $runId = $Matches[1]
+        Write-Host "Build queued with Run ID: $runId"
+        Write-Host "Waiting for build to complete..."
+        
+        # Wait and check status
+        Start-Sleep -Seconds 60
+        $status = az acr task logs --registry ${local.registry_name} --run-id $runId --query "[-1]" 2>&1 | Select-String "was successful"
+        
+        if ($status) {
+          Write-Host "[SUCCESS] Container build completed"
+          Write-Host "Restarting Web App to pull new image..."
+          az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+          Write-Host "[OK] Web App restarted"
+        } else {
+          Write-Host "WARNING: Could not confirm build status, but continuing..."
+          Write-Host "Check Azure Portal ACR build logs for run ID: $runId"
+          az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+        }
       } else {
-        Write-Host "⚠ Container build reported non-zero exit; check Azure Portal for details."
+        Write-Host "WARNING: Could not extract run ID from build output"
+        Write-Host "Build may still be in progress - check Azure Portal"
+        Write-Host "Restarting Web App anyway..."
+        az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
       }
       Write-Host ""
       Write-Host "Multi-agent deployment complete!"
@@ -1617,38 +1673,45 @@ resource "null_resource" "verify_real_agents" {
       Write-Host ""; Write-Host "=== Verifying Real Agent Provisioning (Post-Deploy) ==="; Write-Host ""
       $pythonCmd = "python"
       if (Get-Command python3 -ErrorAction SilentlyContinue) { $pythonCmd = "python3" }
-      $verifyScript = Join-Path (Split-Path $PWD.Path -Parent) "src\app\agents\verify_agents.py"
-      if (!(Test-Path $verifyScript)) {
-        Write-Host "⚠ verify_agents.py not found, skipping detailed verification"
-        exit 0
+      
+      # Run verification script to confirm agents exist in Azure
+      $quickVerifyScript = Join-Path (Split-Path $PWD.Path -Parent) "src\app\agents\quick_verify.py"
+      if (Test-Path $quickVerifyScript) {
+        Write-Host "Running agent verification..."
+        & $pythonCmd $quickVerifyScript
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "[SUCCESS] All agents verified in Azure AI Foundry"
+        } else {
+          Write-Host "WARNING: Agent verification reported issues (check output above)"
+        }
+      } else {
+        Write-Host "WARNING: quick_verify.py not found, skipping verification"
       }
-      & $pythonCmd $verifyScript | Out-String | Write-Host
-      # Parse .env for agent IDs and count real ones
-      $envPath = Join-Path (Split-Path $PWD.Path -Parent) "src/.env"
-      if (Test-Path $envPath) {
-        $content = Get-Content $envPath -Raw
-        $agentVars = @("cora","interior_designer","inventory_agent","customer_loyalty","cart_manager")
+      
+      # Parse agent_ids.json to count real agents
+      $agentIdsPath = Join-Path $PWD.Path "agent_ids.json"
+      if (Test-Path $agentIdsPath) {
+        $agentData = Get-Content $agentIdsPath -Raw | ConvertFrom-Json
         $realCount = 0
-        foreach ($v in $agentVars) {
-          $m = [regex]::Match($content, "^$v=(.+)$", 'Multiline')
-          if ($m.Success) {
-            $id = $m.Groups[1].Value.Trim()
-            if ($id -and ($id -notlike "asst_local_*")) { $realCount++ }
+        foreach ($prop in $agentData.PSObject.Properties) {
+          if ($prop.Value -and ($prop.Value -notlike "asst_local_*")) { 
+            $realCount++ 
           }
         }
-        Write-Host "Real agent count: $realCount"
+        Write-Host ""
+        Write-Host "Real agent count from agent_ids.json: $realCount"
         if ($realCount -ge 5) {
-          Write-Host "✅ Verification passed: $realCount real agents present."
+          Write-Host "[SUCCESS] Verification passed: $realCount real agents deployed."
         } else {
-          Write-Host "⚠ Expected 5 real agents; found $realCount. Keeping apply successful but marking warning."
+          Write-Host "WARNING: Expected 5 real agents; found $realCount."
           $logPath = "../real_agent_warnings.log"
-          "[$(Get-Date -Format o)] WARNING: Only $realCount real agents provisioned." | Out-File -FilePath $logPath -Append -Encoding utf8
+          "[$(Get-Date -Format o)] WARNING: Only $realCount real agents deployed." | Out-File -FilePath $logPath -Append -Encoding utf8
           Write-Host "Logged warning to $logPath"
         }
       } else {
-        Write-Host "⚠ .env file missing; cannot verify agent IDs."
+        Write-Host "WARNING: agent_ids.json not found; cannot verify deployment count."
       }
-      Write-Host "=== Real Agent Verification Complete ==="; Write-Host ""
+      Write-Host ""; Write-Host "=== Real Agent Verification Complete ==="; Write-Host ""
     EOT
     interpreter = ["PowerShell", "-Command"]
   }
@@ -1678,7 +1741,7 @@ resource "null_resource" "deploy_chat_app" {
       $multiAgentEnabled = "${var.enable_multi_agent}"
       
       if ($multiAgentEnabled -eq "true") {
-        Write-Host "ℹ️  Multi-agent mode enabled - deployment handled by deploy_multi_agents resource"
+        Write-Host "[INFO]  Multi-agent mode enabled - deployment handled by deploy_multi_agents resource"
         Write-Host "Skipping duplicate ACR build and deployment"
         Write-Host ""
         Write-Host "Your chat application is available at:"
@@ -1710,7 +1773,7 @@ resource "null_resource" "deploy_chat_app" {
         exit 1
       }
       
-      Write-Host "✓ Source files verified"
+      Write-Host "[OK] Source files verified"
       Write-Host ""
       Write-Host "Starting ACR cloud build..."
       
@@ -1730,10 +1793,10 @@ resource "null_resource" "deploy_chat_app" {
       # Check build result
       if ($LASTEXITCODE -eq 0) {
         Write-Host ""
-        Write-Host "✓ ACR build completed successfully"
+        Write-Host "[OK] ACR build completed successfully"
       } else {
         Write-Host ""
-        Write-Host "⚠ Build may still be in progress. Check Azure Portal for status."
+        Write-Host "WARNING: Build may still be in progress. Check Azure Portal for status."
       }
       
       Write-Host ""
@@ -1766,7 +1829,7 @@ resource "null_resource" "deploy_chat_app" {
           gpt_api_version="2024-12-01-preview" | Out-Null
       
       if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Environment variables configured"
+        Write-Host "[OK] Environment variables configured"
       }
       
       # Get ACR admin credentials
@@ -1792,7 +1855,7 @@ resource "null_resource" "deploy_chat_app" {
         --enable-app-service-storage false | Out-Null
       
       if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Container configuration updated"
+        Write-Host "[OK] Container configuration updated"
       }
       
       # Restart the web app
@@ -1802,7 +1865,7 @@ resource "null_resource" "deploy_chat_app" {
         --resource-group ${azurerm_resource_group.rg.name} `
         --name ${local.web_app_name} | Out-Null
       
-      Write-Host "✓ Web App restarted"
+      Write-Host "[OK] Web App restarted"
       Write-Host ""
       Write-Host "Waiting for container to initialize (30 seconds)..."
       Start-Sleep -Seconds 30
@@ -1810,15 +1873,15 @@ resource "null_resource" "deploy_chat_app" {
       Write-Host ""
       Write-Host "============================================================================"
       Write-Host ""
-      Write-Host "   🎉 ZAVA AI SHOPPING ASSISTANT - DEPLOYED TO AZURE"
+      Write-Host "   *** ZAVA AI SHOPPING ASSISTANT - DEPLOYED TO AZURE"
       Write-Host ""
-      Write-Host "   🌐 Web App URL: https://${local.web_app_name}.azurewebsites.net"
-      Write-Host "   ❤️  Health Check: https://${local.web_app_name}.azurewebsites.net/health"
+      Write-Host "   [WEB] Web App URL: https://${local.web_app_name}.azurewebsites.net"
+      Write-Host "   [HEALTH] Health Check: https://${local.web_app_name}.azurewebsites.net/health"
       Write-Host ""
-      Write-Host "   ✓ Container: ${local.registry_name}.azurecr.io/zava-chat-app:latest"
-      Write-Host "   ✓ SDK: azure-ai-inference (Azure AI Foundry)"
-      Write-Host "   ✓ Model: gpt-4o-mini"
-      Write-Host "   ✓ Endpoint: .services.ai.azure.com/models (auto-converted)"
+      Write-Host "   [OK] Container: ${local.registry_name}.azurecr.io/zava-chat-app:latest"
+      Write-Host "   [OK] SDK: azure-ai-inference (Azure AI Foundry)"
+      Write-Host "   [OK] Model: gpt-4o-mini"
+      Write-Host "   [OK] Endpoint: .services.ai.azure.com/models (auto-converted)"
       Write-Host ""
       Write-Host "   Note: App may take 1-2 minutes to fully initialize on first start"
       Write-Host ""
@@ -1863,7 +1926,7 @@ resource "null_resource" "verify_multi_agent_remote" {
         $resp = Invoke-RestMethod -Uri $agentsEndpoint -Method GET -TimeoutSec 30
         Write-Host "Response:" ($resp | ConvertTo-Json -Depth 5)
         if ($resp.mode -eq 'multi-agent' -and $resp.all_present -and ($resp.agents.cora -like 'asst_local_*')) {
-          Write-Host "✓ Multi-agent remote verification passed (local simulation active)."
+          Write-Host "[OK] Multi-agent remote verification passed (local simulation active)."
           $verificationPassed = $true
         } else {
           Write-Warning "Multi-agent verification incomplete."
@@ -1874,10 +1937,10 @@ resource "null_resource" "verify_multi_agent_remote" {
       }
 
       if (-not $verificationPassed) {
-        Write-Host ""; Write-Host "⚠ ALERT: Multi-agent verification failed. Initiating App Service restart."; Write-Host ""
+        Write-Host ""; Write-Host "WARNING: ALERT: Multi-agent verification failed. Initiating App Service restart."; Write-Host ""
         try {
           az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-          Write-Host "✓ Web App restart triggered due to verification failure."
+          Write-Host "[OK] Web App restart triggered due to verification failure."
         } catch {
           Write-Warning "Failed to restart Web App automatically: $_"
         }
@@ -1897,4 +1960,5 @@ resource "null_resource" "verify_multi_agent_remote" {
     agents_code  = filesha256("../src/chat_app_multi_agent.py")
   }
 }
+
 
