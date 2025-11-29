@@ -103,3 +103,10 @@ graph TD
    - **General**: "Hi, who are you?" (Handled by Cora)
    - **Inventory**: "Do you have the classic leather sofa in stock?" (Handled by Inventory Agent)
    - **Design**: "What colors of green paint do you have?"
+
+<!-- START BADGE -->
+<div align="center">
+  <img src="https://img.shields.io/badge/Total%20views-1586-limegreen" alt="Total views">
+  <p>Refresh Date: 2025-11-29</p>
+</div>
+<!-- END BADGE -->
