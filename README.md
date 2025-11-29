@@ -9,13 +9,12 @@ Last updated: 2025-11-12
 
 ----------
 
-
 > [!IMPORTANT]
 > Disclaimer: This repository contains a demo of `Zava AI Shopping Assistant`, a  multi-agent system designed for e-commerce. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, ingests data, creates real AI agents in Azure AI Foundry, and deploys the application container.` Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) more guindace. There are tons of free resources out there, all eager to support!
 
 <img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
 
-##  Key Features
+## Key Features
 
 - **Multi-Agent Architecture**: Few specialized AI agents working in concert:
   - **Cora (Shopper)**: Front-facing assistant for general queries.
@@ -63,11 +62,11 @@ graph TD
    - Sets up a Python virtual environment.
    - Ingests `product_catalog.csv` into Cosmos DB.
 
-        https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848
+        <https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848>
    
    - Creates and populates an Azure AI Search index with vector embeddings.
 
-        https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb
+        <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
 3. **Agent Creation**:
    - Installs the `azure-ai-projects` SDK.
@@ -91,14 +90,14 @@ graph TD
    - Visit `https://<your-app-name>.azurewebsites.net`.
    - You should see the Zava chat interface.
 
-       https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4
+       <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
 2. **Verify Agents**:
    - Go to the [Azure AI Foundry Portal](https://ai.azure.com).
    - Navigate to your project -> **Build** -> **Agents**.
    - You should see all 5 agents listed.
 
-      https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113
+      <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
 3. **Test Interactions**: For example:
    - **General**: "Hi, who are you?" (Handled by Cora)
