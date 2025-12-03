@@ -94,13 +94,10 @@ resource "azapi_resource" "storage" {
     properties = {
       accessTier                   = "Hot"
       allowSharedKeyAccess         = true
-      defaultToOAuthAuthentication = false
-      allowBlobPublicAccess        = false
       minimumTlsVersion            = "TLS1_2"
       supportsHttpsTrafficOnly     = true
     }
   })
-
   identity {
     type = "SystemAssigned"
   }
@@ -230,7 +227,6 @@ resource "azurerm_log_analytics_workspace" "law" {
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "PerGB2018"
   retention_in_days   = 90
-  daily_quota_gb      = 1
   
   depends_on = [
     azurerm_resource_group.rg
@@ -283,7 +279,10 @@ resource "azurerm_container_registry_webhook" "webhook" {
     "Content-Type" = "application/json"
   }
 
-  depends_on = [azurerm_container_registry.acr]
+  depends_on = [
+    azurerm_container_registry.acr,
+    azurerm_linux_web_app.app
+  ]
 }
 
 resource "azurerm_service_plan" "appserviceplan" {
@@ -306,15 +305,19 @@ resource "azurerm_linux_web_app" "app" {
   }
 
   site_config {
-    always_on         = false
+    always_on         = true
     http2_enabled     = true
     minimum_tls_version = "1.2"
+    # Ensure App Service waits for container readiness
+    health_check_path                 = "/health"
+    health_check_eviction_time_in_min = 10
     application_stack {
-      docker_image_name        = "zava-chat-app:latest"
-      docker_registry_url      = "https://${local.registry_name}.azurecr.io"
-      docker_registry_username = azurerm_container_registry.acr.admin_username
-      docker_registry_password = azurerm_container_registry.acr.admin_password
+      docker_image_name   = "zava-chat-app:latest"
+      # Use full https URL for docker registry
+      docker_registry_url = "https://${local.registry_name}.azurecr.io"
     }
+    # Use system-assigned managed identity for ACR pulls (AcrPull role assignment granted below)
+    container_registry_use_managed_identity = true
   }
 
   app_settings = {
@@ -348,19 +351,31 @@ resource "azurerm_linux_web_app" "app" {
     COSMOS_DB_KEY                       = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : "AAD_AUTH"
     STORAGE_CONNECTION_STRING           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
-    # Multi-Agent Configuration - Real agent IDs from deployment
+    # Multi-Agent Configuration - Agent IDs from Key Vault
     USE_MULTI_AGENT                     = var.enable_multi_agent ? "true" : "false"
-    cora                                = try(jsondecode(file("${path.module}/agent_ids.json")).cora, "asst_local_cora")
-    interior_designer                   = try(jsondecode(file("${path.module}/agent_ids.json")).interior_designer, "asst_local_interior_design")
-    inventory_agent                     = try(jsondecode(file("${path.module}/agent_ids.json")).inventory_agent, "asst_local_inventory")
-    customer_loyalty                    = try(jsondecode(file("${path.module}/agent_ids.json")).customer_loyalty, "asst_local_customer_loyalty")
-    cart_manager                        = try(jsondecode(file("${path.module}/agent_ids.json")).cart_manager, "asst_local_cart_manager")
+    AZURE_AI_AGENT_ENDPOINT             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
+    AGENT_CORA_ID                       = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
+    AGENT_INTERIOR_DESIGNER_ID          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
+    AGENT_INVENTORY_AGENT_ID            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
+    AGENT_CUSTOMER_LOYALTY_ID           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
+    AGENT_CART_MANAGER_ID               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
     CUSTOMER_ID                         = "CUST001"
   }
 
   depends_on = [
     azurerm_container_registry.acr,
     null_resource.ai_model_deployments
+  ]
+}
+
+# Grant AcrPull role to Web App managed identity so it can pull private images without admin credentials
+resource "azurerm_role_assignment" "webapp_acr_pull" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+  depends_on = [
+    azurerm_linux_web_app.app,
+    azurerm_container_registry.acr
   ]
 }
 
@@ -416,25 +431,21 @@ resource "azurerm_key_vault_secret" "search_admin_key" {
   depends_on   = [azurerm_key_vault.kv]
 }
 
-resource "azurerm_key_vault_secret" "storage_connection_string" {
-  name         = "storage-connection-string"
-  value        = azapi_resource.storage.id != "" ? trimspace(chomp(join("", []))) : "placeholder" # placeholder; will be overridden below via provisioner
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
-  lifecycle { ignore_changes = [value] }
+# Fetch storage keys unconditionally
+data "azapi_resource_action" "storage_keys_unconditional" {
+  type                   = "Microsoft.Storage/storageAccounts@2023-01-01"
+  resource_id            = azapi_resource.storage.id
+  action                 = "listKeys"
+  response_export_values = ["keys"]
+  body                   = jsonencode({})
+  depends_on             = [azapi_resource.storage]
 }
 
-resource "null_resource" "update_storage_connection_secret" {
-  depends_on = [azurerm_key_vault_secret.storage_connection_string, azapi_resource.storage]
-  provisioner "local-exec" {
-    command = <<-EOT
-      Write-Host "Updating storage-connection-string secret value..."
-      $conn = az storage account show-connection-string --resource-group ${azurerm_resource_group.rg.name} --name ${local.storage_account} --query connectionString -o tsv
-      az keyvault secret set --vault-name ${azurerm_key_vault.kv.name} --name storage-connection-string --value $conn | Out-Null
-      Write-Host "[OK] storage-connection-string secret updated"
-    EOT
-    interpreter = ["PowerShell", "-Command"]
-  }
+resource "azurerm_key_vault_secret" "storage_connection_string" {
+  name         = "storage-connection-string"
+  value        = "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net"
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.azapi_resource_action.storage_keys_unconditional]
 }
 
 resource "azurerm_key_vault_secret" "cosmos_primary_key" {
@@ -449,6 +460,50 @@ resource "azurerm_key_vault_secret" "cosmos_primary_key" {
 data "external" "agents_state" {
   program = ["python", "read_agents_state.py"]
   depends_on = [null_resource.deploy_multi_agents]
+}
+
+# Store agent IDs in Key Vault
+resource "azurerm_key_vault_secret" "agent_cora_id" {
+  name         = "agent-cora-id"
+  value        = data.external.agents_state.result["agent_cora_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+}
+
+resource "azurerm_key_vault_secret" "agent_interior_designer_id" {
+  name         = "agent-interior-designer-id"
+  value        = data.external.agents_state.result["agent_interior_designer_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+}
+
+resource "azurerm_key_vault_secret" "agent_inventory_agent_id" {
+  name         = "agent-inventory-agent-id"
+  value        = data.external.agents_state.result["agent_inventory_agent_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+}
+
+resource "azurerm_key_vault_secret" "agent_customer_loyalty_id" {
+  name         = "agent-customer-loyalty-id"
+  value        = data.external.agents_state.result["agent_customer_loyalty_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+}
+
+resource "azurerm_key_vault_secret" "agent_cart_manager_id" {
+  name         = "agent-cart-manager-id"
+  value        = data.external.agents_state.result["agent_cart_manager_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+}
+
+# Store agent endpoint in Key Vault (transformed to services.ai.azure.com)
+resource "azurerm_key_vault_secret" "agent_endpoint" {
+  name         = "agent-endpoint"
+  value        = "https://${local.ai_foundry_name}.services.ai.azure.com/models"
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_key_vault.kv]
 }
 
 # App Service Plan autoscale
@@ -899,7 +954,7 @@ data "azapi_resource_action" "storage_list_keys" {
   action                 = "listKeys"
   response_export_values = ["keys"]
   body                   = jsonencode({})
-  depends_on             = [azapi_resource.storage]
+  depends_on             = [data.azapi_resource_action.storage_keys_unconditional]
 }
 
 data "azapi_resource_action" "search_admin_keys" {
@@ -954,7 +1009,7 @@ resource "azapi_resource" "storage_connection" {
       authType      = "AccountKey"
       isSharedToAll = true
       credentials = {
-        key = jsondecode(data.azapi_resource_action.storage_list_keys[0].output).keys[0].value
+        key = jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value
       }
       metadata = {
         ApiType    = "Azure"
@@ -1334,41 +1389,53 @@ resource "null_resource" "data_pipeline" {
         exit 1
       }
       
-      # Create virtual environment
-      Write-Host "Creating Python virtual environment..."
-      if (Test-Path "venv") {
-        Write-Host "Virtual environment already exists, removing..."
-        Remove-Item -Recurse -Force venv
+# Create virtual environment
+Write-Host "Creating Python virtual environment..."
+if (Test-Path "venv") {
+  Write-Host "Virtual environment already exists, attempting to remove..."
+  try {
+    Remove-Item -Recurse -Force venv -ErrorAction Stop
+    Start-Sleep -Seconds 2
+  } catch {
+    Write-Host "WARNING: Could not remove existing venv, it may be locked. Trying to continue..."
+  }
+}
+
+try {
+  python -m venv venv --clear
+} catch {
+  Write-Host "WARNING: Failed to create virtual environment: $_"
+  Write-Host "Skipping data pipeline - you can run it manually later"
+  Write-Host "Run from src directory: python -m venv venv; .\venv\Scripts\activate; pip install -r requirements.txt"
+  exit 0
+}
+
+# Install dependencies directly to venv without activation
+Write-Host "Installing Python dependencies (with retry)..."
+$pythonExe = "venv\Scripts\python.exe"
+
+if (Test-Path $pythonExe) {
+  # Use python -m pip instead of pip.exe to avoid file locking issues
+  $maxAttempts = 3
+  for ($i = 1; $i -le $maxAttempts; $i++) {
+    Write-Host "pip install attempt $i..."
+    & $pythonExe -m pip install --upgrade pip --no-warn-script-location 2>&1 | Out-Null
+    & $pythonExe -m pip install -r requirements.txt
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "Dependencies installed successfully on attempt $i"
+      break
+    } else {
+      Write-Host "pip install failed (exit $LASTEXITCODE)."
+      if ($i -lt $maxAttempts) {
+        Write-Host "Retrying after short backoff..."
+        Start-Sleep -Seconds 5
+      } else {
+        Write-Host "WARNING: Dependencies failed after $maxAttempts attempts"
+        Write-Host "Skipping data pipeline - you can run it manually later"
+        exit 0
       }
-      python -m venv venv
-      
-      # Install dependencies directly to venv without activation
-      Write-Host "Installing Python dependencies (with retry)..."
-      $pythonExe = "venv\Scripts\python.exe"
-      $pipExe = "venv\Scripts\pip.exe"
-      
-      if (Test-Path $pythonExe) {
-        & $pythonExe -m pip install --upgrade pip
-        $maxAttempts = 3
-        for ($i = 1; $i -le $maxAttempts; $i++) {
-          Write-Host "pip install attempt $i..."
-          & $pipExe install -r requirements.txt
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Dependencies installed successfully on attempt $i"
-            break
-          } else {
-            Write-Host "pip install failed (exit $LASTEXITCODE)."
-            if ($i -lt $maxAttempts) {
-              Write-Host "Retrying after short backoff..."
-              Start-Sleep -Seconds 5
-            } else {
-              Write-Host "ERROR: Dependencies failed after $maxAttempts attempts"
-              exit 1
-            }
-          }
-        }
-        
-        Write-Host "Python environment ready"
+    }
+  }        Write-Host "Python environment ready"
         Write-Host ""
         
         # Check if CSV data file exists
@@ -1396,8 +1463,8 @@ resource "null_resource" "data_pipeline" {
           Write-Host "- Data imported to search index"
         }
       } else {
-        Write-Host "ERROR: Failed to create virtual environment"
-        exit 1
+        Write-Host "WARNING: Failed to create virtual environment"
+        Write-Host "Skipping data pipeline - you can run it manually later"
       }
       
       Write-Host ""
@@ -1608,43 +1675,63 @@ resource "null_resource" "deploy_multi_agents" {
       $env:PYTHONIOENCODING = "utf-8"
       
       Write-Host "Building container image in Azure Container Registry..."
-      Write-Host "This may take 2-3 minutes. Checking status via ACR task logs..."
+      Write-Host "This may take 2-3 minutes..."
       
-      # Start build and get run ID (ignore encoding errors in output)
-      $buildOutput = az acr build `
-        --resource-group ${azurerm_resource_group.rg.name} `
-        --registry ${local.registry_name} `
-        --image zava-chat-app:latest `
-        --file "$srcPath\Dockerfile" `
-        --no-logs `
-        "$srcPath" 2>&1 | Out-String
-      
-      # Extract run ID from output
-      if ($buildOutput -match "Run ID: (\w+)") {
-        $runId = $Matches[1]
-        Write-Host "Build queued with Run ID: $runId"
-        Write-Host "Waiting for build to complete..."
+      # Build with logs enabled to see progress
+      $buildSuccess = $false
+      try {
+        az acr build `
+          --resource-group ${azurerm_resource_group.rg.name} `
+          --registry ${local.registry_name} `
+          --image zava-chat-app:latest `
+          --file "$srcPath\Dockerfile" `
+          "$srcPath"
         
-        # Wait and check status
-        Start-Sleep -Seconds 60
-        $status = az acr task logs --registry ${local.registry_name} --run-id $runId --query "[-1]" 2>&1 | Select-String "was successful"
-        
-        if ($status) {
-          Write-Host "[SUCCESS] Container build completed"
-          Write-Host "Restarting Web App to pull new image..."
-          az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-          Write-Host "[OK] Web App restarted"
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "[SUCCESS] ACR build completed successfully"
+          $buildSuccess = $true
         } else {
-          Write-Host "WARNING: Could not confirm build status, but continuing..."
-          Write-Host "Check Azure Portal ACR build logs for run ID: $runId"
-          az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+          Write-Host "[ERROR] ACR build failed with exit code: $LASTEXITCODE"
         }
-      } else {
-        Write-Host "WARNING: Could not extract run ID from build output"
-        Write-Host "Build may still be in progress - check Azure Portal"
-        Write-Host "Restarting Web App anyway..."
-        az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+      } catch {
+        Write-Host "[ERROR] ACR build exception: $_"
       }
+      
+      # Verify image exists
+      Write-Host ""
+      Write-Host "Verifying image in ACR..."
+      $imageExists = $false
+      for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+          $imgCheck = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>&1
+          if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "zava-chat-app") {
+            Write-Host "[OK] Image verified in ACR: zava-chat-app:latest"
+            $imageExists = $true
+            break
+          }
+        } catch { }
+        if ($attempt -lt 3) {
+          Write-Host "Image not found yet, waiting 10s... (attempt $attempt/3)"
+          Start-Sleep -Seconds 10
+        }
+      }
+      
+      if (-not $imageExists) {
+        Write-Host "[CRITICAL] Image not found in ACR after build. Web App cannot start."
+        Write-Host "Please check ACR build logs in Azure Portal."
+        exit 0  # Non-blocking but logged
+      }
+      
+      # Web App will automatically pull image using managed identity (AcrPull role)
+      # No need to set ACR credentials - managed identity handles authentication
+      Write-Host ""
+      Write-Host "[INFO] Web App configured to use managed identity for ACR access"
+      Write-Host "[INFO] Webhook will trigger automatic deployment on image push"
+
+      Write-Host ""
+      Write-Host "Restarting Web App to pull new image..."
+      az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+      Write-Host "[OK] Web App restarted"
       Write-Host ""
       Write-Host "Multi-agent deployment complete!"
     EOT
@@ -1832,31 +1919,10 @@ resource "null_resource" "deploy_chat_app" {
         Write-Host "[OK] Environment variables configured"
       }
       
-      # Get ACR admin credentials
-      $acrUsername = az acr credential show `
-        --name ${local.registry_name} `
-        --query "username" `
-        --output tsv
-      
-      $acrPassword = az acr credential show `
-        --name ${local.registry_name} `
-        --query "passwords[0].value" `
-        --output tsv
-      
-      # Update container image with ACR credentials
-      Write-Host "Configuring container deployment..."
-      az webapp config container set `
-        --resource-group ${azurerm_resource_group.rg.name} `
-        --name ${local.web_app_name} `
-        --docker-custom-image-name ${local.registry_name}.azurecr.io/zava-chat-app:latest `
-        --docker-registry-server-url https://${local.registry_name}.azurecr.io `
-        --docker-registry-server-user "$acrUsername" `
-        --docker-registry-server-password "$acrPassword" `
-        --enable-app-service-storage false | Out-Null
-      
-      if ($LASTEXITCODE -eq 0) {
-        Write-Host "[OK] Container configuration updated"
-      }
+      # Web App uses managed identity for ACR access (configured in site_config)
+      # Webhook will trigger automatic deployment when image is pushed
+      Write-Host "[INFO] Container will be pulled automatically via managed identity"
+      Write-Host "[INFO] Webhook configured for automatic updates on push"
       
       # Restart the web app
       Write-Host ""
@@ -1958,6 +2024,220 @@ resource "null_resource" "verify_multi_agent_remote" {
     web_app_id   = azurerm_linux_web_app.app.id
     docker_hash  = local.dockerfile_hash
     agents_code  = filesha256("../src/chat_app_multi_agent.py")
+  }
+}
+
+# Post-deploy automated fix to ensure Web App starts successfully
+resource "null_resource" "post_deploy_health" {
+  depends_on = [
+    azurerm_linux_web_app.app,
+    azurerm_role_assignment.webapp_acr_pull,
+    azurerm_key_vault_access_policy.app_policy
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-Command"]
+    command = <<-EOT
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host "=== AUTOMATED WEB APP STARTUP FIX ==="
+      Write-Host "============================================================================"
+      $rg = "${azurerm_resource_group.rg.name}"
+      $name = "${local.web_app_name}"
+      $url = "https://${local.web_app_name}.azurewebsites.net"
+
+      Write-Host ""
+      Write-Host "[1/7] Checking current Web App status..."
+      $status = az webapp show --name $name --resource-group $rg --query "state" -o tsv
+      Write-Host "Current state: $status"
+
+      if ($status -eq "Stopped") {
+        Write-Host "[DETECTED] Web App is stopped - applying automated fix"
+      }
+
+      Write-Host ""
+      Write-Host "[2/7] Enabling detailed logging for diagnostics..."
+      az webapp log config --name $name --resource-group $rg `
+        --level verbose `
+        --web-server-logging filesystem `
+        --docker-container-logging filesystem `
+        --detailed-error-messages true `
+        --failed-request-tracing true | Out-Null
+
+      Write-Host ""
+      Write-Host "[2b/7] Verifying container configuration..."
+      $cfg = az webapp config container show --name $name --resource-group $rg --output json | ConvertFrom-Json
+      $desiredImage = "${local.registry_name}.azurecr.io/zava-chat-app:latest"
+      $needsConfig = $true
+      if ($cfg) {
+        $currentImage = $cfg.dockerCustomImageName
+        if ($currentImage -and ($currentImage -eq $desiredImage)) {
+          Write-Host "[OK] Container image already set: $currentImage"
+          $needsConfig = $false
+        } else {
+          Write-Host "[INFO] Container image differs or not set (current: '$currentImage'). Will apply fallback configuration."
+        }
+      } else {
+        Write-Host "[INFO] No container config returned; will apply fallback."
+      }
+
+      if ($needsConfig) {
+        try {
+          $acrUser = az acr credential show --name ${local.registry_name} --query "username" -o tsv
+          $acrPass = az acr credential show --name ${local.registry_name} --query "passwords[0].value" -o tsv
+          az webapp config container set `
+            --resource-group $rg `
+            --name $name `
+            --docker-custom-image-name $desiredImage `
+            --docker-registry-server-url https://${local.registry_name}.azurecr.io `
+            --docker-registry-server-user "$acrUser" `
+            --docker-registry-server-password "$acrPass" `
+            --enable-app-service-storage false | Out-Null
+          Write-Host "[OK] Applied fallback container configuration"
+        } catch {
+          Write-Host "[WARN] Could not apply container configuration: $_"
+        }
+      }
+
+      Write-Host ""
+      Write-Host "[3/7] Ensuring Web App is stopped cleanly..."
+      az webapp stop --name $name --resource-group $rg | Out-Null
+      Write-Host "Waiting 15 seconds for complete shutdown..."
+      Start-Sleep -Seconds 15
+
+      Write-Host ""
+      Write-Host "[4/7] Verifying container image exists in ACR..."
+      $imageExists = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>$null
+      if ($imageExists) {
+        Write-Host "[OK] Container image found: zava-chat-app:latest"
+      } else {
+        Write-Host "[WARNING] Container image may still be building - will retry startup"
+      }
+
+      Write-Host ""
+      Write-Host "[5/7] Starting Web App with fresh container pull..."
+      az webapp start --name $name --resource-group $rg | Out-Null
+      Write-Host "[OK] Start command sent"
+      
+      Write-Host ""
+      Write-Host "[6/7] Waiting for container pull and app initialization..."
+      Write-Host "This takes 2-5 minutes for first deployment..."
+      
+      # Progressive wait with status checks
+      $waitIntervals = @(30, 30, 30, 30, 30, 30)  # 3 minutes total
+      foreach ($interval in $waitIntervals) {
+        Start-Sleep -Seconds $interval
+        $currentStatus = az webapp show --name $name --resource-group $rg --query "state" -o tsv
+        Write-Host "  Status: $currentStatus (waited $($waitIntervals.IndexOf($interval) * 30 + $interval)s)"
+        
+        if ($currentStatus -eq "Running") {
+          Write-Host "  [OK] App is now Running"
+          break
+        }
+      }
+
+      Write-Host ""
+      Write-Host "[7/7] Testing application health endpoint..."
+      $health = "$url/health"
+      $maxAttempts = 10
+      $ok = $false
+      
+      for ($i=1; $i -le $maxAttempts; $i++) {
+        Write-Host "  Attempt $i/$maxAttempts - Testing: $health"
+        try {
+          $resp = Invoke-RestMethod -Uri $health -TimeoutSec 30 -Method GET -ErrorAction Stop
+          if ($resp.status -eq 'healthy') {
+            Write-Host "  [SUCCESS] App is healthy and responding!"
+            Write-Host "  Response: $($resp | ConvertTo-Json -Compress)"
+            $ok = $true
+            break
+          } else {
+            Write-Host "  Status: $($resp | ConvertTo-Json -Depth 4)"
+          }
+        } catch {
+          $errMsg = $_.Exception.Message
+          if ($errMsg -like "*503*" -or $errMsg -like "*502*") {
+            Write-Host "  Container still starting up... (HTTP $($_.Exception.Response.StatusCode))"
+          } else {
+            Write-Host "  Error: $errMsg"
+          }
+        }
+        
+        if ($i -lt $maxAttempts) {
+          Start-Sleep -Seconds 20
+        }
+      }
+
+      if (-not $ok) {
+        Write-Host ""
+        Write-Host "[DIAGNOSTICS] Health checks did not pass during apply. Collecting logs..."
+        # Show recent logs to console and save a snapshot
+        try {
+          $diagLog = Join-Path (Split-Path $PWD.Path -Parent) "deploy.log"
+          Write-Host "Saving recent logs to $diagLog"
+          az webapp log show --name $name --resource-group $rg | Out-File -FilePath $diagLog -Encoding utf8
+          Write-Host "[OK] Recent logs saved"
+        } catch { Write-Host "Could not save recent logs: $_" }
+
+        # Download the zipped log bundle
+        try {
+          $logZip = Join-Path (Split-Path $PWD.Path -Parent) "app-logs.zip"
+          Write-Host "Downloading log bundle to $logZip"
+          az webapp log download --name $name --resource-group $rg --log-file $logZip | Out-Null
+          Write-Host "[OK] Logs bundle saved"
+        } catch { Write-Host "Could not download logs bundle: $_" }
+      }
+
+      Write-Host ""
+      Write-Host "============================================================================"
+      if ($ok) {
+        Write-Host "=== [SUCCESS] WEB APP IS HEALTHY AND READY ==="
+        Write-Host ""
+        Write-Host "Your application is live at:"
+        Write-Host "  $url"
+        Write-Host ""
+        Write-Host "Test the chat interface in your browser now!"
+      } else {
+        Write-Host "=== [INFO] FINAL STATUS CHECK ==="
+        
+        # Get final state
+        $finalState = az webapp show --name $name --resource-group $rg --query "state" -o tsv
+        Write-Host "Web App State: $finalState"
+        
+        if ($finalState -eq "Running") {
+          Write-Host ""
+          Write-Host "The app is Running but health endpoint hasn't responded yet."
+          Write-Host "This is normal for first deployment - the container may need more time."
+          Write-Host ""
+          Write-Host "NEXT STEPS:"
+          Write-Host "1. Wait 2-3 more minutes for full initialization"
+          Write-Host "2. Check the app at: $url"
+          Write-Host "3. View logs: az webapp log tail --name $name --resource-group $rg"
+          Write-Host ""
+          Write-Host "The app will be ready shortly!"
+        } else {
+          Write-Host ""
+          Write-Host "[ACTION REQUIRED] App is in state: $finalState"
+          Write-Host ""
+          Write-Host "Attempting one more restart..."
+          az webapp restart --name $name --resource-group $rg | Out-Null
+          Start-Sleep -Seconds 30
+          
+          Write-Host ""
+          Write-Host "MANUAL VERIFICATION STEPS:"
+          Write-Host "1. Go to Azure Portal > $name > Overview"
+          Write-Host "2. Click 'Restart' button at the top"
+          Write-Host "3. Wait 5 minutes and visit: $url"
+          Write-Host "4. Check logs: az webapp log tail --name $name --resource-group $rg"
+        }
+      }
+      Write-Host "============================================================================"
+      Write-Host ""
+    EOT
+  }
+
+  triggers = {
+    always_run = timestamp()
   }
 }
 

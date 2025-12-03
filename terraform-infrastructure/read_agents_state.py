@@ -4,7 +4,8 @@ import json, os, sys
 # Terraform external data source requires a flat map of strings.
 # We will flatten the agents_state.json into keys like "agent_NAME_id" and "agent_NAME_status".
 
-state_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'app', 'agents', 'agents_state.json')
+# Read from .terraform directory (temporary location)
+state_path = os.path.join(os.path.dirname(__file__), '.terraform', 'agents_state.json')
 result = {}
 
 try:

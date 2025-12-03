@@ -8,6 +8,7 @@ LogFiles
 deploy.log
 __pycache__
 *.log 
+*agents_state.json
 
 # .tfstate files
 *.tfstate
