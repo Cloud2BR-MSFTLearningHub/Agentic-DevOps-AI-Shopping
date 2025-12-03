@@ -16,6 +16,7 @@ Last updated: 2025-12-03
 
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
+>
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
@@ -38,6 +39,7 @@ Last updated: 2025-12-03
 `A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.`
 
 > What is A2A Protocol?
+
 - **Agent-to-Agent Communication**: Structured messaging between multiple AI agents
 - **Task Coordination**: Agents can delegate tasks to specialized agents
 - **Event-Driven Architecture**: Real-time event handling for agent interactions
@@ -45,6 +47,7 @@ Last updated: 2025-12-03
 - **Protocol Standardization**: Consistent API for inter-agent communication
 
 > A2A Components in This Project:
+
 - **Agent Execution Framework**: Manages multiple agent instances (`src/a2a/server/agent_execution.py`)
 - **Event Queue System**: Handles inter-agent communication (`src/a2a/server/events/`)
 - **Task Management**: Coordinates work between agents (`src/a2a/server/tasks.py`)
@@ -53,6 +56,7 @@ Last updated: 2025-12-03
 - **API Endpoints**: RESTful and WebSocket APIs for agent communication (`src/a2a/api/`)
 
 > A2A vs Traditional Multi-Agent Systems:
+
 - **Standardized Protocol**: Uses consistent message formats and APIs
 - **Scalable Architecture**: Easily add new agents without modifying existing ones
 - **Real-time Communication**: WebSocket support for instant agent interactions
