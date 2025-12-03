@@ -14,6 +14,12 @@ Last updated: 2025-11-12
 
 <img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
 
+> [!IMPORTANT]
+> The deployment process typically takes 15-20 minutes
+> 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
+> 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
+> 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
+
 ## Key Features
 
 - **Multi-Agent Architecture**: Few specialized AI agents working in concert:
@@ -44,9 +50,6 @@ graph TD
     Inventory -->|Query| Search[Azure AI Search]
     Inventory -->|Lookup| Cosmos[Cosmos DB]
 ```
-
-> [!IMPORTANT]
-> The deployment process typically takes 15-20 minutes
 
 ## What Happens Under the Hood?
 
