@@ -99,7 +99,10 @@ def deploy_agents():
     ]
 
     # Load prior state (instruction hashes) if present
-    state_path = os.path.join(os.path.dirname(__file__), "agents_state.json")
+    # Write to terraform temp directory instead of src/app/agents
+    terraform_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "terraform-infrastructure")
+    state_path = os.path.join(terraform_dir, ".terraform", "agents_state.json")
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
     prior_state = {}
     if os.path.exists(state_path):
         try:

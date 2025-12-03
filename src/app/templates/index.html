@@ -314,14 +314,14 @@
         
         function getAgentDisplayName(agent) {
             const agentNames = {
-                'cora': 'Cora',
-                'interior_design': 'Design Specialist',
-                'inventory': 'Inventory Manager',
-                'customer_loyalty': 'Rewards Specialist',
-                'cart': 'Cart Manager',
-                'single': 'Assistant'
+                'cora': '🏠 Cora',
+                'interior_design': '🎨 Design Specialist',
+                'inventory': '📦 Inventory Manager',
+                'customer_loyalty': '🎁 Rewards Specialist',
+                'cart': '🛒 Cart Manager',
+                'single': '🤖 Assistant'
             };
-            return agentNames[agent] || 'Assistant';
+            return agentNames[agent] || '🤖 Assistant';
         }
         
         function addMessage(text, type, agentName = null, imageUrl = null) {
