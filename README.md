@@ -10,7 +10,7 @@ Last updated: 2025-12-03
 ----------
 
 > [!IMPORTANT]
-> Disclaimer: This repository contains a demo of `Zava AI Shopping Assistant`, a  multi-agent system designed for e-commerce. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, ingests data, creates real AI agents in Azure AI Foundry, and deploys the application container.` Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) more guindace. There are tons of free resources out there, all eager to support!
+> Disclaimer: This repository contains a demo of `Zava AI Shopping Assistant`, a  multi-agent system designed for e-commerce. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, ingests data, creates real AI agents in MSFT Foundry, and deploys the application container.` Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) more guindace. There are tons of free resources out there, all eager to support!
 
 <img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
 
@@ -29,7 +29,7 @@ Last updated: 2025-12-03
   - **Inventory Manager**: Checks stock availability via A2A requests
   - **Customer Loyalty**: Manages rewards and discounts through agent coordination
   - **Cart Manager**: Handles shopping cart operations with inter-agent communication
-- **Real Azure AI Agents**: Integrates with **Azure AI Foundry** to create and host persistent agents (not just local simulations)
+- **Real Azure AI Agents**: Integrates with **MSFT Foundry** to create and host persistent agents (not just local simulations)
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle including A2A framework deployment
 - **A2A Intelligent Routing**: Enhanced Handoff Service that supports both traditional routing and A2A protocol agent discovery
 - **Data Pipeline Automation**: Automatically ingests product catalogs with A2A event notifications and coordination
@@ -97,7 +97,7 @@ graph TD
 > When you run `terraform apply`, the following automated sequence occurs:
 
 1. **Infrastructure Provisioning**:
-   - Creates Resource Group, Cosmos DB, Azure AI Foundry, AI Search, Storage Account, Key Vault, and Container Registry (ACR).
+   - Creates Resource Group, Cosmos DB, MSFT Foundry, AI Search, Storage Account, Key Vault, and Container Registry (ACR).
    - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`).
    - Sets up A2A protocol infrastructure including event queues and monitoring.
 
@@ -121,7 +121,7 @@ graph TD
 
 4. **Agent Creation & A2A Registration**:
    - Installs the `azure-ai-projects` SDK.
-   - Connects to Azure AI Foundry.
+   - Connects to MSFT Foundry.
    - Provisions 5 real agents with A2A protocol integration and specific instructions.
    - Registers agents with the A2A discovery service.
    - Saves the unique Agent IDs and A2A endpoints to the `.env` file.
@@ -150,7 +150,7 @@ graph TD
    - Verify agent discovery: `https://<your-app-name>.azurewebsites.net/a2a/server/agents`
 
 3. **Verify Agents**:
-   - Go to the [Azure AI Foundry Portal](https://ai.azure.com).
+   - Go to the [MSFT Foundry Portal](https://ai.azure.com).
    - Navigate to your project -> **Build** -> **Agents**.
    - You should see all 5 agents listed with A2A protocol integration.
 
