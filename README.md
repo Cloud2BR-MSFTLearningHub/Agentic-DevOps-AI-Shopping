@@ -39,7 +39,7 @@ Last updated: 2025-11-12
 
 ## About A2A Protocol
 
-**A2A (Agent-to-Agent) Protocol** is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly. This repository implements a complete A2A protocol system that demonstrates:
+`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.`
 
 > What is A2A Protocol?
 - **Agent-to-Agent Communication**: Structured messaging between multiple AI agents
