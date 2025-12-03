@@ -45,3 +45,39 @@ variable "enable_multi_agent" {
   default     = true
 }
 
+variable "enable_a2a_automation" {
+  type        = bool
+  description = "Whether to deploy the A2A automation framework with process management, testing, monitoring, and deployment automation"
+  default     = true
+}
+
+variable "a2a_host" {
+  type        = string
+  description = "Host for the A2A automation system"
+  default     = "0.0.0.0"
+}
+
+variable "a2a_port" {
+  type        = number
+  description = "Port for the A2A automation system"
+  default     = 8001
+}
+
+variable "enable_monitoring_dashboards" {
+  type        = bool
+  description = "Whether to create monitoring dashboards and alerts for A2A system"
+  default     = true
+}
+
+variable "enable_continuous_testing" {
+  type        = bool
+  description = "Whether to enable continuous testing automation for A2A system"
+  default     = true
+}
+
+variable "automation_storage_path" {
+  type        = string
+  description = "Path for automation data storage"
+  default     = "./automation_data"
+}
+
