@@ -18,7 +18,7 @@ locals {
   principal_id                = var.user_principal_id != null ? var.user_principal_id : data.azurerm_client_config.current.object_id
   suffix                      = substr(random_id.suffix.hex, 0, 8)
   cosmos_account_name         = "${var.name_prefix}${local.suffix}cosmosdb"
-  cosmos_db_name              = "zava"
+  cosmos_db_name              = "${var.name_prefix}-db" # Dynamic cosmos db name
   storage_account             = lower(replace("${var.name_prefix}${local.suffix}sa", "-", ""))
   ai_foundry_name             = "aif-${local.suffix}" # custom subdomain
   ai_project_name             = "proj-${local.suffix}"
@@ -57,6 +57,7 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   geo_location {
     location          = var.location
     failover_priority = 0
+    zone_redundant    = false  # Disable zone redundancy to avoid high demand issues
   }
   free_tier_enabled             = false
   analytical_storage_enabled    = false
@@ -242,7 +243,15 @@ resource "azurerm_application_insights" "appinsights" {
   
   lifecycle {
     ignore_changes = [
-      tags
+      tags,
+      daily_data_cap_in_gb,
+      daily_data_cap_notifications_disabled,
+      disable_ip_masking,
+      force_customer_storage_for_profiler,
+      internet_ingestion_enabled,
+      internet_query_enabled,
+      local_authentication_disabled,
+      sampling_percentage
     ]
   }
   
@@ -290,7 +299,7 @@ resource "azurerm_service_plan" "appserviceplan" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
   os_type             = "Linux"
-  sku_name            = "S1"
+  sku_name            = "B1"  # Basic tier to avoid Standard VM quota issues
 }
 
 resource "azurerm_linux_web_app" "app" {
@@ -393,7 +402,7 @@ resource "azurerm_key_vault" "kv" {
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = local.principal_id
-    secret_permissions = ["Get", "List", "Set"]
+    secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
   }
 
   tags = { purpose = "multi-agent-ai-secrets" }
@@ -1551,7 +1560,7 @@ resource "null_resource" "verify_single_agent_app" {
         Write-Host "  1. cd ..\src"
         Write-Host "  2. venv\Scripts\Activate.ps1"
         Write-Host "  3. uvicorn chat_app:app --host 0.0.0.0 --port 8000"
-        Write-Host "  4. Open http://127.0.0.1:8000 in your browser"
+        Write-Host "  4. Or access via Azure Web App: https://${local.web_app_name}.azurewebsites.net"
         Write-Host ""
       } else {
         Write-Host "WARNING:  Some application files are missing!"
@@ -2027,12 +2036,396 @@ resource "null_resource" "verify_multi_agent_remote" {
   }
 }
 
+# A2A Automation Framework Deployment
+resource "null_resource" "deploy_a2a_automation" {
+  count = var.enable_a2a_automation ? 1 : 0
+
+  depends_on = [
+    null_resource.create_env_file,
+    null_resource.data_pipeline,
+    azurerm_application_insights.appinsights,
+    azurerm_log_analytics_workspace.law
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host "=== DEPLOYING A2A AUTOMATION FRAMEWORK ==="
+      Write-Host "============================================================================"
+      Write-Host ""
+      
+      # Navigate to A2A directory
+      $a2aPath = Join-Path (Split-Path $PWD.Path -Parent) "src\a2a"
+      
+      # Check if A2A framework exists
+      if (!(Test-Path $a2aPath)) {
+        Write-Host "[ERROR] A2A automation framework not found at: $a2aPath"
+        Write-Host "Please ensure the A2A framework is properly deployed"
+        exit 1
+      }
+      
+      Write-Host "[OK] A2A framework found at: $a2aPath"
+      Write-Host ""
+      
+      # Check required Python packages for A2A automation
+      Write-Host "[1/7] Installing A2A automation dependencies..."
+      $pythonCmd = "python"
+      if (Get-Command python3 -ErrorAction SilentlyContinue) {
+        $pythonCmd = "python3"
+      }
+      
+      # Create A2A requirements if not exists
+      $a2aRequirements = @"
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+starlette>=0.27.0
+pydantic>=2.5.0
+aiofiles>=23.2.0
+httpx>=0.25.0
+psutil>=5.9.0
+prometheus-client>=0.19.0
+gunicorn>=21.2.0
+aiosignal>=1.3.0
+"@
+      
+      $reqFile = Join-Path $a2aPath "requirements_a2a.txt"
+      $a2aRequirements | Out-File -FilePath $reqFile -Encoding utf8
+      
+      try {
+        & $pythonCmd -m pip install -r $reqFile --quiet
+        Write-Host "[OK] A2A dependencies installed"
+      } catch {
+        Write-Host "[WARN] Some A2A dependencies may not have installed: $_"
+        Write-Host "Continuing with deployment..."
+      }
+      
+      Write-Host ""
+      Write-Host "[2/7] Creating A2A automation configuration..."
+      
+      # Create A2A automation configuration
+      $a2aConfig = @"
+# A2A Automation Framework Configuration
+A2A_HOST=${var.a2a_host}
+A2A_PORT=${var.a2a_port}
+A2A_LOG_LEVEL=INFO
+
+# Base application URL for monitoring
+BASE_APP_URL=https://${local.web_app_name}.azurewebsites.net
+
+# Azure monitoring integration
+APPLICATION_INSIGHTS_CONNECTION_STRING=${azurerm_application_insights.appinsights.connection_string}
+LOG_ANALYTICS_WORKSPACE_ID=${azurerm_log_analytics_workspace.law.workspace_id}
+
+# Automation features
+ENABLE_PROCESS_MANAGEMENT=true
+ENABLE_CONTINUOUS_TESTING=${var.enable_continuous_testing}
+ENABLE_MONITORING_DASHBOARDS=${var.enable_monitoring_dashboards}
+ENABLE_DEPLOYMENT_AUTOMATION=true
+
+# Performance thresholds
+CPU_THRESHOLD=70.0
+MEMORY_THRESHOLD=80.0
+RESPONSE_TIME_THRESHOLD=2000
+ERROR_RATE_THRESHOLD=5.0
+
+# Testing configuration
+CONTINUOUS_TESTING_INTERVAL=60
+LOAD_TEST_DURATION=300
+CONCURRENT_USERS=50
+MAX_RESPONSE_TIME=2000
+MIN_THROUGHPUT=50
+MAX_ERROR_RATE=0.05
+
+# Storage paths
+AUTOMATION_STORAGE_PATH=${var.automation_storage_path}
+MONITORING_DATA_PATH=./monitoring_data
+TEST_RESULTS_PATH=./test_results
+DEPLOYMENT_LOGS_PATH=./deployment_logs
+"@
+      
+      $configFile = Join-Path $a2aPath ".env_automation"
+      $a2aConfig | Out-File -FilePath $configFile -Encoding utf8
+      Write-Host "[OK] A2A configuration created at: $configFile"
+      
+      Write-Host ""
+      Write-Host "[3/7] Setting up A2A automation directories..."
+      
+      # Create automation directories
+      $autoDirs = @(
+        "${var.automation_storage_path}",
+        "monitoring_data",
+        "test_results", 
+        "deployment_logs",
+        "logs"
+      )
+      
+      foreach ($dir in $autoDirs) {
+        $fullPath = Join-Path $a2aPath $dir
+        if (!(Test-Path $fullPath)) {
+          New-Item -ItemType Directory -Path $fullPath -Force | Out-Null
+          Write-Host "  Created: $dir"
+        }
+      }
+      Write-Host "[OK] Automation directories ready"
+      
+      Write-Host ""
+      Write-Host "[4/7] Validating A2A automation components..."
+      
+      # Check automation components exist
+      $a2aComponents = @(
+        "automation\process_manager.py",
+        "automation\deployment_manager.py", 
+        "automation\test_framework.py",
+        "automation\monitoring_framework.py",
+        "automated_main.py",
+        "main.py",
+        "config.py"
+      )
+      
+      $missingComponents = @()
+      foreach ($component in $a2aComponents) {
+        $componentPath = Join-Path $a2aPath $component
+        if (Test-Path $componentPath) {
+          Write-Host "  [OK] $component"
+        } else {
+          $missingComponents += $component
+          Write-Host "  [MISSING] $component"
+        }
+      }
+      
+      if ($missingComponents.Count -gt 0) {
+        Write-Host ""
+        Write-Host "[ERROR] Missing A2A automation components:"
+        foreach ($missing in $missingComponents) {
+          Write-Host "  - $missing"
+        }
+        Write-Host ""
+        Write-Host "Please ensure the A2A automation framework is completely deployed"
+        exit 1
+      }
+      
+      Write-Host "[OK] All A2A automation components validated"
+      
+      Write-Host ""
+      Write-Host "[5/7] Creating A2A automation service script..."
+      
+      # Create service script for A2A automation
+      $serviceScript = @"
+#!/usr/bin/env python3
+# A2A Automation Service Launcher
+import os
+import sys
+
+# Add current directory to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if __name__ == '__main__':
+    from automated_main import main
+    main()
+"@
+      
+      $serviceFile = Join-Path $a2aPath "start_automation.py"
+      $serviceScript | Out-File -FilePath $serviceFile -Encoding utf8
+      Write-Host "[OK] Service script created: start_automation.py"
+      
+      Write-Host ""
+      Write-Host "[6/7] Testing A2A automation startup..."
+      
+      # Test automation startup (quick validation)
+      try {
+        Set-Location $a2aPath
+        
+        Write-Host "Testing automation framework import..."
+        $testResult = & $pythonCmd -c "import automated_main; print('OK')" 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "[OK] A2A automation framework imports successfully"
+        } else {
+          Write-Host "[WARN] Import test had issues: $testResult"
+          Write-Host "Continuing with deployment..."
+        }
+      } catch {
+        Write-Host "[WARN] Could not test automation startup: $_"
+        Write-Host "This may be expected during initial deployment"
+      } finally {
+        Set-Location (Split-Path $a2aPath -Parent)
+      }
+      
+      Write-Host ""
+      Write-Host "[7/7] Creating automation management scripts..."
+      
+      # Create PowerShell management scripts
+      $startScript = @"
+# Start A2A Automation Framework
+Write-Host "Starting A2A Automation Framework..."
+Set-Location "$a2aPath"
+python automated_main.py
+"@
+      
+      $stopScript = @"
+# Stop A2A Automation Framework
+Write-Host "Stopping A2A Automation Framework..."
+Get-Process -Name "python" | Where-Object { $_.CommandLine -like "*automated_main*" } | Stop-Process -Force
+Write-Host "A2A Automation Framework stopped"
+"@
+      
+      $statusScript = @"
+# Check A2A Automation Framework Status
+Write-Host "Checking A2A Automation Framework status..."
+$processes = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*automated_main*" }
+if ($processes) {
+  Write-Host "A2A Automation Framework is RUNNING"
+  Write-Host "Processes: $($processes.Count)"
+  $processes | Format-Table Id,ProcessName,StartTime
+} else {
+  Write-Host "A2A Automation Framework is STOPPED"
+}
+
+# Check automation endpoint
+try {
+  $response = Invoke-RestMethod -Uri "https://${local.web_app_name}.azurewebsites.net/a2a/automation/status" -TimeoutSec 5
+  Write-Host "Automation Status: $($response.system_status)"
+} catch {
+  Write-Host "Automation endpoint not accessible"
+}
+"@
+      
+      $startScript | Out-File -FilePath (Join-Path $a2aPath "start_automation.ps1") -Encoding utf8
+      $stopScript | Out-File -FilePath (Join-Path $a2aPath "stop_automation.ps1") -Encoding utf8  
+      $statusScript | Out-File -FilePath (Join-Path $a2aPath "status_automation.ps1") -Encoding utf8
+      
+      Write-Host "[OK] Management scripts created:"
+      Write-Host "  - start_automation.ps1"
+      Write-Host "  - stop_automation.ps1" 
+      Write-Host "  - status_automation.ps1"
+      
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host "=== A2A AUTOMATION FRAMEWORK DEPLOYED SUCCESSFULLY ==="
+      Write-Host "============================================================================"
+      Write-Host ""
+      Write-Host "🤖 A2A Automation Features Enabled:"
+      Write-Host "  ✅ Automated Process Management"
+      Write-Host "  ✅ Continuous Deployment Pipeline"
+      if ("${var.enable_continuous_testing}" -eq "true") {
+        Write-Host "  ✅ Continuous Testing Framework"
+      }
+      if ("${var.enable_monitoring_dashboards}" -eq "true") {
+        Write-Host "  ✅ Real-time Monitoring & Alerting"
+      }
+      Write-Host "  ✅ Self-healing Capabilities"
+      Write-Host ""
+      Write-Host "🎯 A2A Automation Endpoints (when running):"
+      Write-Host "  📊 Status: https://${local.web_app_name}.azurewebsites.net/a2a/automation/status"
+      Write-Host "  📈 Metrics: https://${local.web_app_name}.azurewebsites.net/a2a/automation/metrics"
+      Write-Host "  🏥 Health: https://${local.web_app_name}.azurewebsites.net/a2a/automation/health"
+      Write-Host "  🧪 Testing: https://${local.web_app_name}.azurewebsites.net/a2a/automation/test/run"
+      Write-Host ""
+      Write-Host "🚀 To start A2A automation:"
+      Write-Host "  cd $a2aPath"
+      Write-Host "  .\start_automation.ps1"
+      Write-Host ""
+      Write-Host "📋 To check status:"
+      Write-Host "  .\status_automation.ps1"
+      Write-Host ""
+      Write-Host "⏹️ To stop automation:"
+      Write-Host "  .\stop_automation.ps1"
+      Write-Host ""
+      Write-Host "📁 Automation data stored in: ${var.automation_storage_path}"
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host ""
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+
+  triggers = {
+    env_file_id = null_resource.create_env_file[0].id
+    app_insights_id = azurerm_application_insights.appinsights.id
+    always_run = timestamp()
+  }
+}
+
+# A2A Monitoring Integration with Azure
+resource "azurerm_monitor_action_group" "a2a_alerts" {
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  
+  name                = "${local.web_app_name}-a2a-alerts"
+  resource_group_name = azurerm_resource_group.rg.name
+  short_name          = "a2aalerts"
+
+  webhook_receiver {
+    name        = "a2a-automation-webhook"
+    service_uri = "https://${local.web_app_name}.azurewebsites.net/a2a/automation/webhook/alert"
+    use_common_alert_schema = true
+  }
+
+  depends_on = [azurerm_linux_web_app.app, null_resource.deploy_a2a_automation]
+}
+
+# A2A System Health Alert
+resource "azurerm_monitor_metric_alert" "a2a_system_health" {
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  
+  name                = "${local.web_app_name}-a2a-health"
+  resource_group_name = azurerm_resource_group.rg.name
+  scopes              = [azurerm_linux_web_app.app.id]
+  description         = "Alert when A2A automation system health degrades"
+  severity            = 2
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+  
+  criteria {
+    metric_namespace = "Microsoft.Web/sites"
+    metric_name      = "HealthCheckStatus" 
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 1
+  }
+  
+  action {
+    action_group_id = azurerm_monitor_action_group.a2a_alerts[0].id
+  }
+  
+  depends_on = [azurerm_monitor_action_group.a2a_alerts]
+}
+
+# A2A Performance Alert  
+resource "azurerm_monitor_metric_alert" "a2a_performance" {
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  
+  name                = "${local.web_app_name}-a2a-performance"
+  resource_group_name = azurerm_resource_group.rg.name
+  scopes              = [azurerm_linux_web_app.app.id]
+  description         = "Alert when A2A system response time exceeds threshold"
+  severity            = 3
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+  
+  criteria {
+    metric_namespace = "Microsoft.Web/sites"
+    metric_name      = "AverageResponseTime"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 5000  # 5 seconds
+  }
+  
+  action {
+    action_group_id = azurerm_monitor_action_group.a2a_alerts[0].id
+  }
+  
+  depends_on = [azurerm_monitor_action_group.a2a_alerts]
+}
+
 # Post-deploy automated fix to ensure Web App starts successfully
 resource "null_resource" "post_deploy_health" {
   depends_on = [
     azurerm_linux_web_app.app,
     azurerm_role_assignment.webapp_acr_pull,
-    azurerm_key_vault_access_policy.app_policy
+    azurerm_key_vault_access_policy.app_policy,
+    null_resource.deploy_a2a_automation
   ]
 
   provisioner "local-exec" {

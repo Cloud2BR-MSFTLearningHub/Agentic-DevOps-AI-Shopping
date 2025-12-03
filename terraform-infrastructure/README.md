@@ -5,14 +5,14 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2025-11-03
+Last updated: 2025-12-03
 
 ----------
 
 > This approach focuses on `setting up the required infrastructure via Terraform`. It allows for source control of not only the solution code, connections, and setups `but also the infrastructure itself`.
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/fecb8a4d-017f-49b4-9217-c0b94cebb935" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+  <img src="https://github.com/user-attachments/assets/77546e62-0cbe-4bb3-9581-1c2d8cfb4f70" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
 
 <div align="center">
@@ -119,7 +119,7 @@ graph TD;
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1611-limegreen" alt="Total views">
+  <img src="https://img.shields.io/badge/Total%20views-1624-limegreen" alt="Total views">
   <p>Refresh Date: 2025-12-03</p>
 </div>
 <!-- END BADGE -->
