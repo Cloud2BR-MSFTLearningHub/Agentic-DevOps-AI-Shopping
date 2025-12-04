@@ -294,6 +294,116 @@ resource "azurerm_container_registry_webhook" "webhook" {
   ]
 }
 
+# Standalone Docker Image Build - Always runs to ensure ACR has the required image
+resource "null_resource" "docker_image_build" {
+  # Trigger rebuild when:
+  # 1. Dockerfile changes
+  # 2. Application source code changes
+  # 3. Requirements.txt changes
+  # 4. ACR or app changes
+  # 5. Force rebuild on every apply (always_run ensures terraform always executes the provisioner)
+  triggers = {
+    dockerfile_hash     = local.dockerfile_hash
+    app_source_hash     = local.app_source_hash
+    requirements_hash   = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
+    acr_id              = azurerm_container_registry.acr.id
+    always_run          = timestamp()  # Forces provisioner to run on every apply
+  }
+
+  depends_on = [
+    azurerm_container_registry.acr
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host ""
+      Write-Host "=========================================="
+      Write-Host "Building & Pushing Docker Image to ACR"
+      Write-Host "=========================================="
+      Write-Host ""
+      
+      $ErrorActionPreference = "Continue"  # Don't stop on warnings
+      cd ..
+      $srcPath = "src"
+      
+      Write-Host "Starting Docker build and push to ACR..."
+      Write-Host "Registry: ${local.registry_name}"
+      Write-Host "Image: zava-chat-app:latest"
+      Write-Host "Dockerfile: $srcPath/Dockerfile"
+      Write-Host "Source Path: $srcPath"
+      Write-Host ""
+      
+      # Set encoding for Azure CLI
+      $env:PYTHONIOENCODING = "utf-8"
+      chcp 65001 > $null
+      
+      Write-Host "Executing ACR build command..."
+      Write-Host ""
+      
+      try {
+        # Build and push image
+        az acr build `
+          --resource-group ${azurerm_resource_group.rg.name} `
+          --registry ${local.registry_name} `
+          --image zava-chat-app:latest `
+          --file "$srcPath\Dockerfile" `
+          "$srcPath" `
+          --no-logs
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host ""
+          Write-Host "[SUCCESS] Docker image successfully built and pushed to ACR"
+          Write-Host ""
+          Write-Host "Image details:"
+          Write-Host "  Registry: ${local.registry_name}.azurecr.io"
+          Write-Host "  Repository: zava-chat-app"
+          Write-Host "  Tag: latest"
+          Write-Host ""
+          
+          # Wait for image to be available
+          Write-Host "Waiting for image to be available in registry..."
+          Start-Sleep -Seconds 10
+          
+          # Verify image exists in ACR
+          Write-Host "Verifying image in ACR..."
+          $imgCheck = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>$null
+          
+          if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "zava-chat-app") {
+            Write-Host "[VERIFIED] Image confirmed in ACR registry"
+            Write-Host ""
+            exit 0
+          } else {
+            Write-Host "[WARNING] Image verification failed but build succeeded"
+            Write-Host "This may be a timing issue. Image should be available shortly."
+            Write-Host ""
+            exit 0
+          }
+        } else {
+          Write-Host ""
+          Write-Host "[ERROR] ACR build failed with exit code: $LASTEXITCODE"
+          Write-Host ""
+          Write-Host "Troubleshooting steps:"
+          Write-Host "  1. Check requirements.txt for dependency conflicts"
+          Write-Host "  2. Verify Dockerfile paths are correct"
+          Write-Host "  3. Manual build command:"
+          Write-Host "     az acr build --resource-group ${azurerm_resource_group.rg.name} --registry ${local.registry_name} --image zava-chat-app:latest --file $srcPath\Dockerfile $srcPath"
+          Write-Host ""
+          exit 1
+        }
+      } catch {
+        Write-Host ""
+        Write-Host "[ERROR] Exception during build: $_"
+        Write-Host "Manual build command:"
+        Write-Host "az acr build --resource-group ${azurerm_resource_group.rg.name} --registry ${local.registry_name} --image zava-chat-app:latest --file $srcPath\Dockerfile $srcPath"
+        Write-Host ""
+        exit 1
+      }
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+}
+
 resource "azurerm_service_plan" "appserviceplan" {
   name                = local.app_service_plan
   resource_group_name = azurerm_resource_group.rg.name
@@ -373,7 +483,8 @@ resource "azurerm_linux_web_app" "app" {
 
   depends_on = [
     azurerm_container_registry.acr,
-    null_resource.ai_model_deployments
+    null_resource.ai_model_deployments,
+    null_resource.docker_image_build
   ]
 }
 
@@ -1677,68 +1788,9 @@ resource "null_resource" "deploy_multi_agents" {
       }
       
       Write-Host ""
-      Write-Host "Triggering container rebuild with agent configuration..."
-      cd ..
-      $srcPath = "src"
-      [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-      $env:PYTHONIOENCODING = "utf-8"
-      
-      Write-Host "Building container image in Azure Container Registry..."
-      Write-Host "This may take 2-3 minutes..."
-      
-      # Build with logs enabled to see progress
-      $buildSuccess = $false
-      try {
-        az acr build `
-          --resource-group ${azurerm_resource_group.rg.name} `
-          --registry ${local.registry_name} `
-          --image zava-chat-app:latest `
-          --file "$srcPath\Dockerfile" `
-          "$srcPath"
-        
-        if ($LASTEXITCODE -eq 0) {
-          Write-Host "[SUCCESS] ACR build completed successfully"
-          $buildSuccess = $true
-        } else {
-          Write-Host "[ERROR] ACR build failed with exit code: $LASTEXITCODE"
-        }
-      } catch {
-        Write-Host "[ERROR] ACR build exception: $_"
-      }
-      
-      # Verify image exists
+      Write-Host "Docker image already built by standalone resource."
       Write-Host ""
-      Write-Host "Verifying image in ACR..."
-      $imageExists = $false
-      for ($attempt = 1; $attempt -le 3; $attempt++) {
-        try {
-          $imgCheck = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>&1
-          if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "zava-chat-app") {
-            Write-Host "[OK] Image verified in ACR: zava-chat-app:latest"
-            $imageExists = $true
-            break
-          }
-        } catch { }
-        if ($attempt -lt 3) {
-          Write-Host "Image not found yet, waiting 10s... (attempt $attempt/3)"
-          Start-Sleep -Seconds 10
-        }
-      }
-      
-      if (-not $imageExists) {
-        Write-Host "[CRITICAL] Image not found in ACR after build. Web App cannot start."
-        Write-Host "Please check ACR build logs in Azure Portal."
-        exit 0  # Non-blocking but logged
-      }
-      
-      # Web App will automatically pull image using managed identity (AcrPull role)
-      # No need to set ACR credentials - managed identity handles authentication
-      Write-Host ""
-      Write-Host "[INFO] Web App configured to use managed identity for ACR access"
-      Write-Host "[INFO] Webhook will trigger automatic deployment on image push"
-
-      Write-Host ""
-      Write-Host "Restarting Web App to pull new image..."
+      Write-Host "Restarting Web App to ensure latest configuration..."
       az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
       Write-Host "[OK] Web App restarted"
       Write-Host ""
