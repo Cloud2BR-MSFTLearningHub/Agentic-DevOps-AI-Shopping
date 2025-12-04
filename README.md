@@ -12,6 +12,8 @@ Last updated: 2025-12-04
 > [!IMPORTANT]
 > Disclaimer: This repository contains a demo of `Zava AI Shopping Assistant`, an enhanced multi-agent system implementing Agent-to-Agent (A2A) protocol for e-commerce. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, ingests data, creates specialized AI agents with delegation patterns in MSFT Foundry, and deploys the complete A2A application stack.` Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance. There are tons of free resources out there, all eager to support!
 
+> E.g 
+
 <img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
 
 > [!IMPORTANT]
@@ -116,6 +118,8 @@ graph TD
    - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`).
    - Sets up A2A protocol infrastructure including event queues and monitoring.
 
+      > E.g 
+      
        <img width="1859" height="900" alt="image" src="https://github.com/user-attachments/assets/cd24ab7f-5ddd-46de-b266-0d0a24c45803" />
 
 2. **A2A Framework Deployment**:
@@ -128,10 +132,14 @@ graph TD
    - Sets up a Python virtual environment.
    - Ingests `product_catalog.csv` into Cosmos DB with A2A event notifications.
 
+        > E.g 
+
         <https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848>
    
    - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
 
+        > E.g 
+        
         <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
 4. **Enhanced Agent Creation & A2A Registration**:
@@ -145,7 +153,9 @@ graph TD
    - Configures delegation relationships between Product Manager and specialized agents.
    - Saves the unique Agent IDs, delegation endpoints, and A2A configuration to the `.env` file.
 
-      <img width="1907" height="990" alt="image" src="https://github.com/user-attachments/assets/4234ead4-16e0-4bec-bbfd-3b8891d113b0" />
+      > E.g 
+      
+      <img width="1881" height="1000" alt="image" src="https://github.com/user-attachments/assets/59a9dcaf-9291-403c-b8b0-1195c1375aac" />
 
 5. **Application Deployment**:
    - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
@@ -161,6 +171,8 @@ graph TD
    - Visit `https://<your-app-name>.azurewebsites.net`.
    - You should see the Zava chat interface with A2A protocol support.
 
+      > E.g 
+      
        <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
 2. **Verify A2A Protocol Endpoints**:
@@ -175,6 +187,8 @@ graph TD
      - Core agents: Cora, Interior Design, Inventory, Loyalty, Cart Manager
      - Product Management Specialist with delegation capabilities
 
+      > E.g 
+      
       <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
 4. **Test Enhanced A2A Interactions**: For example:
@@ -188,7 +202,7 @@ graph TD
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1624-limegreen" alt="Total views">
-  <p>Refresh Date: 2025-12-03</p>
+  <img src="https://img.shields.io/badge/Total%20views-1696-limegreen" alt="Total views">
+  <p>Refresh Date: 2025-12-04</p>
 </div>
 <!-- END BADGE -->
