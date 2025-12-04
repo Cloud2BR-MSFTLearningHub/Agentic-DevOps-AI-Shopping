@@ -16,3 +16,6 @@ python-multipart==0.0.12
 orjson==3.10.7
 pydantic==2.10.4
 Pillow>=10.4.0
+
+# Microsoft Agent Framework for A2A Protocol (Preview)
+agent-framework-azure-ai --pre

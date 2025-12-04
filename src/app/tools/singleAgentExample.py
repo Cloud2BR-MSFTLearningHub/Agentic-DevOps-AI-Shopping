@@ -29,7 +29,7 @@ deployment = (
 client = None
 
 def get_client():
-    """Lazily initialize and return the Azure AI Foundry client"""
+    """Lazily initialize and return the MSFT Foundry client"""
     global client
     if client is None:
         # Graceful fallback if endpoint or key missing
@@ -64,7 +64,7 @@ def generate_response(text_input):
     # Get initialized client
     client = get_client()
 
-    # Prepare the messages for Azure AI Foundry
+    # Prepare the messages for MSFT Foundry
     messages = [
         {
             "role": "system",
@@ -104,7 +104,7 @@ You can discuss a wide range of topics related to home improvement, construction
         }
     ]
 
-    # Call Azure AI Foundry chat API
+    # Call MSFT Foundry chat API
     response = client.complete(
         model=deployment,
         messages=messages,

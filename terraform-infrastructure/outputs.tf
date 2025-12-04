@@ -30,12 +30,12 @@ output "application_url" {
 
 output "ai_foundry_name" {
   value       = local.ai_foundry_name
-  description = "Azure AI Foundry account name"
+  description = "MSFT Foundry account name"
 }
 
 output "ai_project_name" {
   value       = local.ai_project_name
-  description = "Azure AI Foundry project name"
+  description = "MSFT Foundry project name"
 }
 
 output "resource_group_name" {
@@ -61,7 +61,7 @@ output "cosmos_db_name" {
 
 output "ai_foundry_endpoint" {
   value       = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-  description = "Azure AI Foundry endpoint URL"
+  description = "MSFT Foundry endpoint URL"
 }
 
 # Real agent IDs & statuses (external data source from agents_state.json)

@@ -57,7 +57,7 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   geo_location {
     location          = var.location
     failover_priority = 0
-    zone_redundant    = false  # Disable zone redundancy to avoid high demand issues
+    zone_redundant    = false  # Disable zone redundancy to avoid high demand issues for demo
   }
   free_tier_enabled             = false
   analytical_storage_enabled    = false
@@ -340,14 +340,14 @@ resource "azurerm_linux_web_app" "app" {
     gpt_api_key                         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key)"
     gpt_api_version                     = "2024-12-01-preview"
 
-    # Azure AI Foundry Configuration
+    # MSFT Foundry Configuration
     AZURE_AI_FOUNDRY_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_AI_PROJECT_NAME               = local.ai_project_name
     AZURE_AI_PROJECT_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "gpt-4o-mini"
     AZURE_AI_FOUNDRY_API_KEY            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key)"
 
-    # Azure OpenAI Configuration
+    # MSFT Foundry OpenAI Configuration
     AZURE_OPENAI_CHAT_DEPLOYMENT        = "gpt-4o-mini"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT   = "text-embedding-3-small"
     AZURE_OPENAI_IMAGE_DEPLOYMENT       = "dall-e-3"
@@ -812,7 +812,7 @@ resource "azurerm_role_assignment" "search_project_contributor" {
   principal_type     = "ServicePrincipal"
 }
 
-# Storage account permissions for Azure AI Foundry project
+# Storage account permissions for MSFT Foundry project
 resource "azurerm_role_assignment" "storage_blob_data_contributor_user" {
   scope              = azapi_resource.storage.id
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
@@ -997,7 +997,7 @@ data "azapi_resource_action" "ai_foundry_keys" {
   depends_on             = [azapi_resource.ai_foundry]
 }
 
-# Connect resources to Azure AI Foundry project using ARM templates
+# Connect resources to MSFT Foundry project using ARM templates
 resource "azapi_resource" "storage_connection" {
   count = var.enable_ai_automation ? 1 : 0
 
@@ -1188,7 +1188,7 @@ resource "null_resource" "create_env_file" {
         New-Item -ItemType Directory -Path "../src" -Force
       }
       
-      # Get Azure AI Foundry endpoint and fix domain for Agents API
+      # Get MSFT Foundry endpoint and fix domain for Agents API
       $rawAiFoundryEndpoint = az cognitiveservices account show `
         --resource-group "${azurerm_resource_group.rg.name}" `
         --name "${local.ai_foundry_name}" `
@@ -1350,7 +1350,7 @@ CUSTOMER_ID=CUST001
       } else {
         Write-Host "  - Models: gpt-4o-mini, text-embedding-3-small (phi-4 not available)"
       }
-      Write-Host "  - Azure AI Foundry: ${local.ai_foundry_name}"
+      Write-Host "  - MSFT Foundry: ${local.ai_foundry_name}"
       Write-Host "  - Azure AI Project: ${local.ai_project_name}"
       Write-Host "  - Cosmos DB: ${local.cosmos_account_name}"
       Write-Host "  - Search Service: ${local.search_service_name}"
@@ -1619,7 +1619,7 @@ resource "null_resource" "deploy_multi_agents" {
       Write-Host "Using Agents API endpoint: $agentEndpoint"
       
       # Deploy agents using Python script
-      Write-Host "Deploying 5 agents to Azure AI Foundry..."
+      Write-Host "Deploying 6 agents to MSFT Foundry..."
       $agentScriptPath = Join-Path (Split-Path $PWD.Path -Parent) "src\app\agents\deploy_real_agents.py"
       
       if (!(Test-Path $agentScriptPath)) {
@@ -1776,7 +1776,7 @@ resource "null_resource" "verify_real_agents" {
         Write-Host "Running agent verification..."
         & $pythonCmd $quickVerifyScript
         if ($LASTEXITCODE -eq 0) {
-          Write-Host "[SUCCESS] All agents verified in Azure AI Foundry"
+          Write-Host "[SUCCESS] All agents verified in MSFT Foundry"
         } else {
           Write-Host "WARNING: Agent verification reported issues (check output above)"
         }
@@ -1847,7 +1847,7 @@ resource "null_resource" "deploy_chat_app" {
       
       # Build container directly in ACR (no local Docker needed)
       Write-Host "Building chat application container in Azure Container Registry..."
-      Write-Host "This includes the Azure AI Foundry SDK with corrected endpoint configuration"
+      Write-Host "This includes the MSFT Foundry SDK with corrected endpoint configuration"
       Write-Host "Build time: approximately 2-3 minutes..."
       Write-Host ""
       
@@ -1905,7 +1905,7 @@ resource "null_resource" "deploy_chat_app" {
         --query "properties.endpoint" `
         --output tsv
       
-      # Get Azure AI Foundry access key
+      # Get MSFT Foundry access key
       $aiFoundryKey = az cognitiveservices account keys list `
         --resource-group ${azurerm_resource_group.rg.name} `
         --name ${local.ai_foundry_name} `
@@ -1954,7 +1954,7 @@ resource "null_resource" "deploy_chat_app" {
       Write-Host "   [HEALTH] Health Check: https://${local.web_app_name}.azurewebsites.net/health"
       Write-Host ""
       Write-Host "   [OK] Container: ${local.registry_name}.azurecr.io/zava-chat-app:latest"
-      Write-Host "   [OK] SDK: azure-ai-inference (Azure AI Foundry)"
+      Write-Host "   [OK] SDK: azure-ai-inference (MSFT Foundry)"
       Write-Host "   [OK] Model: gpt-4o-mini"
       Write-Host "   [OK] Endpoint: .services.ai.azure.com/models (auto-converted)"
       Write-Host ""
@@ -2633,5 +2633,8 @@ resource "null_resource" "post_deploy_health" {
     always_run = timestamp()
   }
 }
+
+# Enaganeced Product Management Agent Resources
+
 
 

@@ -27,6 +27,7 @@ from .agent_adapters import (
     CartManagementAgentAdapter, CoraAgentAdapter
 )
 
+
 # Import existing handoff service
 import sys
 import os
@@ -197,7 +198,7 @@ class A2ACoordinatorAgent(BaseAgentExecutor):
             best_domain = max(scores, key=scores.get)
             confidence = min(0.8, scores[best_domain] * 0.2)  # Max 0.8 confidence
         else:
-            best_domain = "cora"  # Default fallback
+            best_domain = "product_management"  # Default to product management
             confidence = 0.3
         
         return {
@@ -215,8 +216,8 @@ class A2ACoordinatorAgent(BaseAgentExecutor):
     ) -> None:
         """Route request to the appropriate agent"""
         if domain not in self.agents:
-            logger.warning(f"Unknown domain: {domain}, falling back to cora")
-            domain = "cora"
+            logger.warning(f"Unknown domain: {domain}, falling back to product_management")
+            domain = "product_management"
         
         target_agent = self.agents[domain]
         self.active_handoffs[task.id] = domain

@@ -1,6 +1,6 @@
 """
-Deploy real agents to Azure AI Foundry using the AI Projects SDK.
-This creates 5 actual agents in the AI Foundry project.
+Deploy real agents to MSFT Foundry using the AI Projects SDK.
+This creates 6 specialized agents in the MSFT Foundry project with enhanced A2A protocol support.
 """
 import os
 import sys
@@ -93,6 +93,21 @@ def deploy_agents():
             "instructions": (
                 "You are the shopping cart assistant at Zava. Help customers add items to their cart, remove items, review cart contents, and proceed to checkout. "
                 "Be efficient and confirm all cart operations clearly."
+            ),
+            "model": "gpt-4o-mini"
+        },
+        {
+            "name": "Product Management Specialist",
+            "env_var": "product_management",
+            "instructions": (
+                "You are the Product Management Specialist for Zava, coordinating with specialized plugins for comprehensive product services. "
+                "Your expertise includes product catalog search and management, personalized recommendations through AI analysis, "
+                "market trend analysis and insights, product ranking and popularity metrics, and inventory coordination. "
+                "You work with ProductPlugin for catalog operations, MarketingPlugin for recommendations and trends, "
+                "and RankingPlugin for popularity analysis. Coordinate with other agents when queries involve design (interior_designer), "
+                "purchasing (cart_manager), loyalty benefits (customer_loyalty), or availability (inventory_agent). "
+                "Always provide accurate product information with specific names, prices, and availability. "
+                "Use A2A protocol patterns to ensure seamless handoffs to appropriate specialists."
             ),
             "model": "gpt-4o-mini"
         }
