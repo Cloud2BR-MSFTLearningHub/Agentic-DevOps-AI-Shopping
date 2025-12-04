@@ -241,17 +241,19 @@ resource "azurerm_application_insights" "appinsights" {
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.law.id
   
+  # Disable billing features to avoid 404 errors
+  daily_data_cap_in_gb                     = 1
+  daily_data_cap_notifications_disabled    = true
+  sampling_percentage                       = 100
+  
   lifecycle {
     ignore_changes = [
       tags,
-      daily_data_cap_in_gb,
-      daily_data_cap_notifications_disabled,
       disable_ip_masking,
       force_customer_storage_for_profiler,
       internet_ingestion_enabled,
       internet_query_enabled,
-      local_authentication_disabled,
-      sampling_percentage
+      local_authentication_disabled
     ]
   }
   
