@@ -11,7 +11,7 @@ if () {
 
 # Check automation endpoint
 try {
-   = Invoke-RestMethod -Uri "https://zava-89c29415-app.azurewebsites.net/a2a/automation/status" -TimeoutSec 5
+   = Invoke-RestMethod -Uri "https://zava-aa51ac9e-app.azurewebsites.net/a2a/automation/status" -TimeoutSec 5
   Write-Host "Automation Status: "
 } catch {
   Write-Host "Automation endpoint not accessible"
