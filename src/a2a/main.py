@@ -37,7 +37,7 @@ from a2a.config import get_global_config, ServerMode, setup_logging
 from a2a.api import A2AChatRouter, A2AServerRouter
 from a2a.api.enhanced_chat_router import EnhancedA2AChatRouter
 from a2a.server import A2AStarletteApplication, DefaultRequestHandler
-from a2a.agent import EnhancedProductManagementAgent
+from a2a.agent import EnaganecedProductManagementAgent
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill
 
 # Import legacy components for hybrid mode
