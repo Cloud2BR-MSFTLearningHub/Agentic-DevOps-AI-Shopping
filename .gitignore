@@ -10,6 +10,7 @@ __pycache__
 *.log 
 *agents_state.json
 .env.example
+.env_automation
 
 # .tfstate files
 *.tfstate
