@@ -191,7 +191,7 @@ graph TD
       
       <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
-4. **Test Enhanced A2A Interactions**: For example:
+4. **Test Enhanced A2A Interactions**: `Adjust as needed, this is just a base`. For example:
    - **General**: "Hi, who are you?" (Handled by Cora via A2A protocol)
    - **Inventory**: "Do you have the classic leather sofa in stock?" (Routed through A2A to Inventory Agent)
    - **Design**: "What colors of green paint do you have?" (A2A task delegation to Design Agent)
