@@ -105,8 +105,9 @@ resource "azapi_resource" "storage" {
 }
 
 # AI Foundry account (preview) using AzAPI provider.
+# Using managed identity authentication (disableLocalAuth = true for better security)
 resource "azapi_resource" "ai_foundry" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  type                      = "Microsoft.CognitiveServices/accounts@2024-10-01"
   name                      = local.ai_foundry_name
   location                  = var.location
   parent_id                 = azurerm_resource_group.rg.id
@@ -118,7 +119,7 @@ resource "azapi_resource" "ai_foundry" {
     properties = {
       allowProjectManagement = true
       customSubDomainName    = local.ai_foundry_name
-      disableLocalAuth       = false
+      disableLocalAuth       = true
     }
   })
 }
@@ -446,24 +447,21 @@ resource "azurerm_linux_web_app" "app" {
     DOCKER_ENABLE_CI                    = "true"
     WEBSITES_PORT                       = "8000"
 
-    # GPT Configuration (Key Vault referenced secrets)
+    # GPT Configuration (using managed identity)
     gpt_endpoint                        = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     gpt_deployment                      = "gpt-4o-mini"
-    gpt_api_key                         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key)"
     gpt_api_version                     = "2024-12-01-preview"
 
-    # MSFT Foundry Configuration
+    # MSFT Foundry Configuration (using managed identity)
     AZURE_AI_FOUNDRY_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_AI_PROJECT_NAME               = local.ai_project_name
     AZURE_AI_PROJECT_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "gpt-4o-mini"
-    AZURE_AI_FOUNDRY_API_KEY            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key)"
 
-    # MSFT Foundry OpenAI Configuration
+    # MSFT Foundry OpenAI Configuration (using managed identity)
     AZURE_OPENAI_CHAT_DEPLOYMENT        = "gpt-4o-mini"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT   = "text-embedding-3-small"
     AZURE_OPENAI_IMAGE_DEPLOYMENT       = "dall-e-3"
-    AZURE_OPENAI_API_KEY                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key)"
     AZURE_OPENAI_ENDPOINT               = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_OPENAI_API_VERSION            = "2024-02-01"
 
@@ -537,14 +535,9 @@ resource "azurerm_key_vault_access_policy" "app_policy" {
   depends_on = [azurerm_linux_web_app.app]
 }
 
-# Populate Key Vault secrets (AI Foundry key, Cosmos key, Search key, Storage connection)
+# Populate Key Vault secrets (Cosmos key, Search key, Storage connection)
 # Key Vault Secrets as Terraform resources (provides version for references)
-resource "azurerm_key_vault_secret" "ai_foundry_key" {
-  name         = "ai-foundry-key"
-  value        = jsondecode(data.azapi_resource_action.ai_foundry_keys[0].output).key1
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
-}
+# Note: AI Foundry now uses managed identity instead of keys
 
 resource "azurerm_key_vault_secret" "search_admin_key" {
   name         = "search-admin-key"
@@ -925,6 +918,23 @@ resource "azurerm_role_assignment" "search_project_contributor" {
   principal_type     = "ServicePrincipal"
 }
 
+# Role assignments for Web App managed identity to access AI Foundry
+resource "azurerm_role_assignment" "webapp_foundry_openai_user" {
+  scope              = azapi_resource.ai_foundry.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
+  principal_id       = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_linux_web_app.app]
+}
+
+resource "azurerm_role_assignment" "webapp_project_openai_user" {
+  scope              = azapi_resource.ai_project.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
+  principal_id       = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_linux_web_app.app]
+}
+
 # Storage account permissions for MSFT Foundry project
 resource "azurerm_role_assignment" "storage_blob_data_contributor_user" {
   scope              = azapi_resource.storage.id
@@ -1099,16 +1109,7 @@ data "azapi_resource_action" "cosmos_keys" {
   depends_on             = [azurerm_cosmosdb_account.cosmos]
 }
 
-# Get AI Foundry keys for Web App configuration
-data "azapi_resource_action" "ai_foundry_keys" {
-  count                  = var.enable_ai_automation ? 1 : 0
-  type                   = "Microsoft.CognitiveServices/accounts@2024-10-01"
-  resource_id            = azapi_resource.ai_foundry.id
-  action                 = "listKeys"
-  response_export_values = ["key1"]
-  body                   = jsonencode({})
-  depends_on             = [azapi_resource.ai_foundry]
-}
+# AI Foundry now uses managed identity authentication - no keys needed
 
 # Connect resources to MSFT Foundry project using ARM templates
 resource "azapi_resource" "storage_connection" {
