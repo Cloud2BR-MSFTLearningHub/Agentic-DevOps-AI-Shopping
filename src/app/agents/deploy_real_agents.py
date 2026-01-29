@@ -83,25 +83,64 @@ def _create_agent(project_client: AIProjectClient, *, model: str, name: str, ins
         except TypeError:
             pass
 
+        # Preferred: pass name + definition explicitly (newer SDK signature)
+        try:
+            from azure.ai.projects.models import PromptAgentDefinition, AgentKind
+
+            agent_def = PromptAgentDefinition(
+                kind=AgentKind.PROMPT,
+                model=model,
+                instructions=instructions,
+            )
+            return agents.create(name=name, definition=agent_def, description=name)
+        except Exception:
+            pass
+
         # Fall back to SDK model definitions
         try:
-            from azure.ai.projects.models import PromptAgentDefinition
+            from azure.ai.projects.models import PromptAgentDefinition, AgentKind
 
-            agent_def = PromptAgentDefinition(model=model, name=name, instructions=instructions)
+            agent_def = PromptAgentDefinition(
+                kind=AgentKind.PROMPT,
+                model=model,
+                instructions=instructions,
+            )
             return agents.create(agent_def)
         except Exception:
             pass
 
         try:
-            from azure.ai.projects.models import AgentDefinition
+            from azure.ai.projects.models import AgentDefinition, AgentKind
 
-            agent_def = AgentDefinition(model=model, name=name, instructions=instructions)
+            agent_def = AgentDefinition(kind=str(AgentKind.PROMPT))
             return agents.create(agent_def)
         except Exception:
             pass
 
-        # Last resort: pass a dict payload
-        return agents.create({"model": model, "name": name, "instructions": instructions})
+        # Try AgentCreateRequest with explicit definition
+        try:
+            from azure.ai.projects.models import AgentCreateRequest, PromptAgentDefinition, AgentKind
+
+            agent_def = PromptAgentDefinition(
+                kind=AgentKind.PROMPT,
+                model=model,
+                instructions=instructions,
+            )
+            request = AgentCreateRequest(definition=agent_def, name=name, description=name)
+            return agents.create(request)
+        except Exception:
+            pass
+
+        # Some SDKs require a "definition" wrapper in the payload
+        payload = {
+            "name": name,
+            "kind": "prompt",
+            "definition": {
+                "model": model,
+                "instructions": instructions,
+            },
+        }
+        return agents.create(payload)
 
     if hasattr(agents, "create_prompt_agent"):
         return agents.create_prompt_agent(model=model, name=name, instructions=instructions)
@@ -166,7 +205,7 @@ def deploy_agents():
                 "Your role is to help customers find products, answer questions about inventory, provide recommendations, and assist with general shopping needs. "
                 "Be friendly, professional, and informative. Keep answers concise and helpful."
             ),
-            "model": agent_model_map.get("cora", model_deployment)
+            "model": agent_model_map.get("cora", "model-router")
         },
         {
             "name": "Interior Design Specialist",
@@ -418,8 +457,8 @@ def deploy_agents():
         print(f"WARNING: Failed to write state file: {se}")
 
     # Update src/.env with real agent IDs (early propagation)
-    # NOTE: Terraform generates ../src/.env (workspace-relative), not ../src/app/.env.
-    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env'))
+    # NOTE: Terraform generates ../src/.env (workspace-relative).
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src', '.env'))
     if os.path.exists(env_path):
         try:
             import re
