@@ -6,29 +6,123 @@ import os
 import sys
 import json
 import hashlib
+from typing import Optional
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from azure.core.credentials import AzureKeyCredential
 from dotenv import load_dotenv
 
-load_dotenv()
+
+_dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+if os.path.exists(_dotenv_path):
+    load_dotenv(dotenv_path=_dotenv_path)
+else:
+    # Fall back to default search behavior for local/dev environments.
+    load_dotenv()
+
+def get_env(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read an environment variable with APPSETTING_ fallback."""
+    value = os.getenv(name)
+    if value:
+        return value
+    prefixed = os.getenv(f"APPSETTING_{name}")
+    if prefixed:
+        return prefixed
+    return default
+
 
 # Debug environment variables
-print(f"DEBUG: AZURE_SUBSCRIPTION_ID={os.getenv('AZURE_SUBSCRIPTION_ID')}")
-print(f"DEBUG: AZURE_RESOURCE_GROUP={os.getenv('AZURE_RESOURCE_GROUP')}")
-print(f"DEBUG: AZURE_AI_PROJECT_NAME={os.getenv('AZURE_AI_PROJECT_NAME')}")
-print(f"DEBUG: AZURE_LOCATION={os.getenv('AZURE_LOCATION')}")
+print(f"DEBUG: AZURE_SUBSCRIPTION_ID={get_env('AZURE_SUBSCRIPTION_ID')}")
+print(f"DEBUG: AZURE_RESOURCE_GROUP={get_env('AZURE_RESOURCE_GROUP')}")
+print(f"DEBUG: AZURE_AI_PROJECT_NAME={get_env('AZURE_AI_PROJECT_NAME')}")
+print(f"DEBUG: AZURE_LOCATION={get_env('AZURE_LOCATION')}")
 
 def _hash_instructions(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+
+def _resolve_model_name(model: str) -> str:
+    """Resolve model name to the exact Azure AI Foundry deployment name."""
+    model_map = {
+        "model_router": "model-router",
+        "gpt_4o": "gpt-4o",
+        "gpt_4o_mini": "gpt-4o-mini",
+        "text_embedding_3_small": "text-embedding-3-small",
+        "model-router": "model-router",
+        "gpt-4o": "gpt-4o",
+        "gpt-4o-mini": "gpt-4o-mini",
+        "text-embedding-3-small": "text-embedding-3-small",
+    }
+    resolved = model_map.get(model, model)
+    if resolved == model and "_" in model:
+        resolved = model.replace("_", "-")
+    return resolved
+
+
+def _sanitize_agent_name(name: str) -> str:
+    """Sanitize agent name for API constraints (lowercase, hyphens, <=63 chars)."""
+    import re
+
+    name = name.replace(" ", "-")
+    name = re.sub(r"[^a-zA-Z0-9-]", "", name)
+    name = re.sub(r"-+", "-", name)
+    name = name[:63]
+    name = name.strip("-")
+    return name.lower()
+
+
+def _create_agent(project_client: AIProjectClient, *, model: str, name: str, instructions: str):
+    """Create an agent with SDK-version fallback support."""
+    agents = project_client.agents
+
+    if hasattr(agents, "create_agent"):
+        return agents.create_agent(model=model, name=name, instructions=instructions)
+
+    if hasattr(agents, "create"):
+        # Try a simple kwargs signature first
+        try:
+            return agents.create(model=model, name=name, instructions=instructions)
+        except TypeError:
+            pass
+
+        # Fall back to SDK model definitions
+        try:
+            from azure.ai.projects.models import PromptAgentDefinition
+
+            agent_def = PromptAgentDefinition(model=model, name=name, instructions=instructions)
+            return agents.create(agent_def)
+        except Exception:
+            pass
+
+        try:
+            from azure.ai.projects.models import AgentDefinition
+
+            agent_def = AgentDefinition(model=model, name=name, instructions=instructions)
+            return agents.create(agent_def)
+        except Exception:
+            pass
+
+        # Last resort: pass a dict payload
+        return agents.create({"model": model, "name": name, "instructions": instructions})
+
+    if hasattr(agents, "create_prompt_agent"):
+        return agents.create_prompt_agent(model=model, name=name, instructions=instructions)
+
+    raise AttributeError("No supported agent creation method found in Azure AI Projects SDK")
+
+
+from services.azure_auth import get_default_credential
+
 def deploy_agents():
     """Deploy or update agents idempotently, emitting structured JSON for Terraform."""
 
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
+    project_endpoint = get_env("AZURE_AI_PROJECT_ENDPOINT") or get_env("AZURE_AI_FOUNDRY_ENDPOINT")
     if not project_endpoint:
-        print("ERROR: AZURE_AI_PROJECT_ENDPOINT / AZURE_AI_FOUNDRY_ENDPOINT not configured")
-        sys.exit(0)  # Do not hard fail; allow Terraform run to proceed
+        foundry_name = get_env("AZURE_AI_FOUNDRY_NAME")
+        project_name = get_env("AZURE_AI_PROJECT_NAME")
+        if foundry_name and project_name:
+            project_endpoint = f"https://{foundry_name}.services.ai.azure.com/api/projects/{project_name}"
+        else:
+            print("ERROR: AZURE_AI_PROJECT_ENDPOINT / AZURE_AI_FOUNDRY_ENDPOINT not configured")
+            sys.exit(0)  # Do not hard fail; allow Terraform run to proceed
 
     print("=" * 70)
     print("Idempotent Multi-Agent Provisioning - Azure AI Foundry")
@@ -37,18 +131,32 @@ def deploy_agents():
     print()
 
     # Try to construct connection string if available
-    project_connection_string = os.getenv("AZURE_AI_PROJECT_CONNECTION_STRING")
+    project_connection_string = get_env("AZURE_AI_PROJECT_CONNECTION_STRING")
     if not project_connection_string:
-        sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")
-        rg = os.getenv("AZURE_RESOURCE_GROUP")
-        project_name = os.getenv("AZURE_AI_PROJECT_NAME")
-        location = os.getenv("AZURE_LOCATION")
+        sub_id = get_env("AZURE_SUBSCRIPTION_ID")
+        rg = get_env("AZURE_RESOURCE_GROUP")
+        project_name = get_env("AZURE_AI_PROJECT_NAME")
+        location = get_env("AZURE_LOCATION")
         
         if sub_id and rg and project_name and location:
             project_connection_string = f"{location}.api.azureml.ms;subscription_id={sub_id};resource_group={rg};project_name={project_name}"
             print(f"Constructed connection string: {project_connection_string}")
 
     # Agent config definitions
+    model_deployment = (
+        get_env("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
+        or get_env("AZURE_OPENAI_CHAT_DEPLOYMENT")
+        or get_env("MODEL_DEPLOYMENT_NAME")
+        or "model-router"
+    )
+    model_deployment = _resolve_model_name(model_deployment)
+
+    agent_model_map = {}
+    try:
+        agent_model_map = json.loads(get_env("AGENT_MODEL_MAP", "{}") or "{}")
+    except Exception:
+        agent_model_map = {}
+
     agents_config = [
         {
             "name": "Cora - Shopping Assistant",
@@ -58,7 +166,7 @@ def deploy_agents():
                 "Your role is to help customers find products, answer questions about inventory, provide recommendations, and assist with general shopping needs. "
                 "Be friendly, professional, and informative. Keep answers concise and helpful."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("cora", model_deployment)
         },
         {
             "name": "Interior Design Specialist",
@@ -67,7 +175,7 @@ def deploy_agents():
                 "You are an expert interior designer at Zava. Help customers with color schemes, room layout, product combinations, and style advice (modern, rustic, minimalist, etc.). "
                 "Provide creative, practical advice with specific product recommendations when possible."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("interior_designer", model_deployment)
         },
         {
             "name": "Inventory Manager",
@@ -76,7 +184,7 @@ def deploy_agents():
                 "You are the inventory specialist at Zava. Help customers check product availability, provide stock levels, suggest alternatives if items are out of stock, and estimate restock timelines. "
                 "Be factual and helpful about inventory status."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("inventory_agent", model_deployment)
         },
         {
             "name": "Customer Loyalty Specialist",
@@ -85,7 +193,7 @@ def deploy_agents():
                 "You are the customer loyalty and rewards specialist at Zava. Help customers understand their loyalty tier and benefits, calculate applicable discounts, learn about rewards programs, and maximize their savings. "
                 "Be enthusiastic about helping customers save money."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("customer_loyalty", model_deployment)
         },
         {
             "name": "Cart Management Assistant",
@@ -94,7 +202,7 @@ def deploy_agents():
                 "You are the shopping cart assistant at Zava. Help customers add items to their cart, remove items, review cart contents, and proceed to checkout. "
                 "Be efficient and confirm all cart operations clearly."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("cart_manager", model_deployment)
         },
         {
             "name": "Product Management Specialist",
@@ -109,7 +217,7 @@ def deploy_agents():
                 "Always provide accurate product information with specific names, prices, and availability. "
                 "Use A2A protocol patterns to ensure seamless handoffs to appropriate specialists."
             ),
-            "model": "gpt-4o-mini"
+            "model": agent_model_map.get("product_management", model_deployment)
         }
     ]
 
@@ -132,13 +240,13 @@ def deploy_agents():
     try:
         print("Initializing Azure AI Project Client...")
         
-        # Use DefaultAzureCredential for authentication
-        credential = DefaultAzureCredential()
+        # Use managed identity when available (AZURE_CLIENT_ID), otherwise fall back
+        credential = get_default_credential()
         
         # Get required environment variables
-        sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")
-        rg = os.getenv("AZURE_RESOURCE_GROUP")
-        project_name = os.getenv("AZURE_AI_PROJECT_NAME")
+        sub_id = get_env("AZURE_SUBSCRIPTION_ID")
+        rg = get_env("AZURE_RESOURCE_GROUP")
+        project_name = get_env("AZURE_AI_PROJECT_NAME")
         
         if not all([sub_id, rg, project_name]):
             raise ValueError("Missing required environment variables: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_AI_PROJECT_NAME")
@@ -163,20 +271,29 @@ def deploy_agents():
         print(f"Resource Group: {rg}")
         print(f"Project Name: {project_name}")
         
-        # Initialize AIProjectClient with endpoint and credential
-        # The SDK requires the full project endpoint
-        project_client = AIProjectClient(
-            endpoint=full_project_endpoint,
-            credential=credential
-        )
+        # Initialize AIProjectClient with connection string when supported (newer SDKs),
+        # otherwise fall back to the project endpoint.
+        if project_connection_string and hasattr(AIProjectClient, "from_connection_string"):
+            project_client = AIProjectClient.from_connection_string(
+                credential=credential,
+                conn_str=project_connection_string,
+            )
+        else:
+            # The SDK requires the full project endpoint
+            project_client = AIProjectClient(endpoint=full_project_endpoint, credential=credential)
         
         print("Successfully initialized AIProjectClient")
         print("Fetching existing agents...")
         
         existing_agents = {}
         try:
-            agent_list = list(project_client.agents.list_agents())
+            if hasattr(project_client.agents, "list"):
+                agent_list = list(project_client.agents.list())
+            else:
+                agent_list = list(project_client.agents.list_agents())
             existing_agents = {a.name: a for a in agent_list}
+            for a in agent_list:
+                existing_agents[_sanitize_agent_name(a.name)] = a
             print(f"Found {len(existing_agents)} existing agent(s)")
         except Exception as list_err:
             print(f"Could not list existing agents (may be first run): {list_err}")
@@ -195,6 +312,7 @@ def deploy_agents():
         name = cfg["name"]
         env_var = cfg["env_var"]
         instr = cfg["instructions"]
+        sanitized_name = _sanitize_agent_name(name)
         instr_hash = _hash_instructions(instr)
         prior_hash = prior_state.get(env_var, {}).get("hash")
 
@@ -207,37 +325,46 @@ def deploy_agents():
             continue
 
         # Idempotent logic - check if agent already exists
-        if name in existing_agents:
-            agent_obj = existing_agents[name]
-            agent_id = getattr(agent_obj, "id", None) or getattr(agent_obj, "agentId", f"unknown-{env_var}")
+        existing_agent = existing_agents.get(name) or existing_agents.get(sanitized_name)
+        if existing_agent:
+            agent_obj = existing_agent
+            agent_id = (
+                getattr(agent_obj, "id", None)
+                or getattr(agent_obj, "agent_id", None)
+                or getattr(agent_obj, "agentId", None)
+                or f"unknown-{env_var}"
+            )
             
             # Attempt update if instructions changed
             if prior_hash and prior_hash != instr_hash:
-                print(f"[{env_var}] Updating agent (instructions changed): {name}")
+                print(f"[{env_var}] Recreating agent (instructions changed): {name}")
                 try:
-                    # Try native update if available
                     try:
-                        project_client.agents.update_agent(agent_id=agent_id, instructions=instr)
-                        statuses[env_var] = "updated"
-                        print(f"[{env_var}] Successfully updated: {agent_id}")
+                        if hasattr(project_client.agents, "delete_agent"):
+                            project_client.agents.delete_agent(agent_id=agent_id)
+                        else:
+                            project_client.agents.delete(agent_id)
                     except Exception:
-                        # Fallback recreate strategy
-                        print(f"[{env_var}] Update not supported, recreating...")
-                        try:
-                            project_client.agents.delete_agent(agent_id)
-                        except Exception:
-                            pass
-                        new_agent = project_client.agents.create_agent(
-                            model=cfg["model"], 
-                            name=name, 
-                            instructions=instr
-                        )
-                        agent_id = new_agent.id
-                        statuses[env_var] = "recreated"
-                        print(f"[{env_var}] Successfully recreated: {agent_id}")
+                        pass
+
+                    new_agent = _create_agent(
+                        project_client,
+                        model=_resolve_model_name(cfg["model"]),
+                        name=sanitized_name,
+                        instructions=instr,
+                    )
+                    agent_id = (
+                        getattr(new_agent, "id", None)
+                        or getattr(new_agent, "agent_id", None)
+                        or getattr(new_agent, "agentId", None)
+                        or agent_id
+                    )
+                    statuses[env_var] = "recreated"
+                    print(f"[{env_var}] Successfully recreated: {agent_id}")
                 except Exception as ue:
-                    print(f"[{env_var}] Failed to update {name}: {ue}")
+                    print(f"[{env_var}] Failed to recreate {name}: {ue}")
                     statuses[env_var] = "existing-no-update"
+
                 deployed_agents[env_var] = agent_id
             else:
                 print(f"[{env_var}] Reusing existing agent: {name} ({agent_id})")
@@ -248,12 +375,18 @@ def deploy_agents():
         # Create new agent
         print(f"[{env_var}] Creating new agent: {name}")
         try:
-            agent = project_client.agents.create_agent(
-                model=cfg["model"], 
-                name=name, 
-                instructions=instr
+            agent = _create_agent(
+                project_client,
+                model=_resolve_model_name(cfg["model"]),
+                name=sanitized_name,
+                instructions=instr,
             )
-            agent_id = agent.id
+            agent_id = (
+                getattr(agent, "id", None)
+                or getattr(agent, "agent_id", None)
+                or getattr(agent, "agentId", None)
+                or f"unknown-{env_var}"
+            )
             deployed_agents[env_var] = agent_id
             statuses[env_var] = "created"
             print(f"[{env_var}] SUCCESS - Created agent: {agent_id}")
@@ -284,39 +417,35 @@ def deploy_agents():
     except Exception as se:
         print(f"WARNING: Failed to write state file: {se}")
 
-    # Update .env with real agent IDs (early propagation)
-    env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
+    # Update src/.env with real agent IDs (early propagation)
+    # NOTE: Terraform generates ../src/.env (workspace-relative), not ../src/app/.env.
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env'))
     if os.path.exists(env_path):
         try:
+            import re
+
             with open(env_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
-            # Replace each agent ID
+
+            # Normalize Agents endpoint domains (cognitiveservices -> services.ai)
+            content = content.replace("cognitiveservices.azure.com", "services.ai.azure.com")
+
+            # Replace or append each agent ID
             for var, aid in deployed_agents.items():
-                # Use regex to replace the value after the = sign
-                import re
                 pattern = rf'^{re.escape(var)}=.*$'
                 replacement = f'{var}={aid}'
-                content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
-            
-            # Also fix the project endpoint domain in .env
-            if "cognitiveservices.azure.com" in content:
-                print("Fixing endpoint domains in .env...")
-                content = content.replace(
-                    "AZURE_AI_PROJECT_ENDPOINT=https://aif-",
-                    "# AZURE_AI_PROJECT_ENDPOINT=https://aif-"  # Comment out old
-                )
-                # Add corrected endpoint after the Azure AI Foundry section
-                if "# Azure AI Foundry Configuration" in content:
-                    content = content.replace(
-                        "# Azure AI Foundry Configuration\n",
-                        "# Azure AI Foundry Configuration\n# Note: Agents API uses .services.ai.azure.com domain\n"
-                    )
-            
+                if re.search(pattern, content, flags=re.MULTILINE):
+                    content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+                else:
+                    # Append if the key is missing (supports older .env templates)
+                    if not content.endswith("\n"):
+                        content += "\n"
+                    content += f"{replacement}\n"
+
             with open(env_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-            
-            print(f"[{env_var}] Updated .env with agent IDs: {env_path}")
+
+            print(f"Updated .env with agent IDs: {env_path}")
             print("Agent IDs written:")
             for var, aid in deployed_agents.items():
                 print(f"  {var}: {aid}")
@@ -325,7 +454,7 @@ def deploy_agents():
             import traceback
             traceback.print_exc()
     else:
-        print("INFO: .env file not found for agent ID propagation")
+        print(f"INFO: .env file not found for agent ID propagation: {env_path}")
 
     print("\n" + "=" * 70)
     print("DEPLOYMENT SUMMARY")

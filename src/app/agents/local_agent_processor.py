@@ -3,6 +3,9 @@ import os
 from typing import List, Dict, Any, Generator
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
+from azure.identity import DefaultAzureCredential
+
+from services.azure_auth import get_default_credential, get_inference_credential
 
 try:
     from app.agents.agents_config import AGENT_INSTRUCTIONS
@@ -33,26 +36,49 @@ class LocalAgentProcessor:
         self.domain = domain
         
         # Initialize GPT client (shared across all agents)
-        endpoint = os.getenv("gpt_endpoint", "")
-        api_key = os.getenv("gpt_api_key", "")
-        deployment = os.getenv("gpt_deployment", "gpt-4o-mini")
-        
-        # Convert endpoint to Foundry format if needed
-        if endpoint:
+        endpoint = (
+            os.getenv("gpt_endpoint")
+            or os.getenv("AZURE_OPENAI_ENDPOINT")
+            or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
+            or ""
+        )
+        api_key = (
+            os.getenv("gpt_api_key")
+            or os.getenv("AZURE_OPENAI_API_KEY")
+            or os.getenv("AZURE_AI_FOUNDRY_API_KEY")
+            or ""
+        )
+        deployment = (
+            os.getenv("gpt_deployment")
+            or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+            or os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
+            or "gpt-4o-mini"
+        )
+
+        self.use_gpt = False
+        self.client = None
+        self.model = deployment
+
+        if endpoint and deployment:
+            # Convert endpoint to Foundry format if needed
             foundry_endpoint = endpoint.replace('.cognitiveservices.', '.services.ai.')
             if '.services.azure.com' in foundry_endpoint and '.services.ai.azure.com' not in foundry_endpoint:
                 foundry_endpoint = foundry_endpoint.replace('.services.azure.com', '.services.ai.azure.com')
             if not foundry_endpoint.endswith('/models'):
                 foundry_endpoint = f"{foundry_endpoint.rstrip('/')}/models"
-        
-        self.use_gpt = bool(endpoint and api_key)
-        if self.use_gpt:
+
             try:
-                self.client = ChatCompletionsClient(
-                    endpoint=foundry_endpoint,
-                    credential=AzureKeyCredential(api_key)
-                )
-                self.model = deployment
+                # Prefer key auth if present; otherwise use token-based auth (Managed Identity in cloud).
+                if api_key:
+                    credential = AzureKeyCredential(api_key)
+                else:
+                    credential = get_inference_credential(
+                        api_key=None,
+                        default_credential=get_default_credential(),
+                        endpoint=foundry_endpoint,
+                    )
+                self.client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=credential)
+                self.use_gpt = True
             except Exception:
                 self.use_gpt = False
 

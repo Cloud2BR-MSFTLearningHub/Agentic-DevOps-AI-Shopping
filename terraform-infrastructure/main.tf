@@ -41,6 +41,9 @@ locals {
     ) : fileexists("../src/${f}") ? filesha256("../src/${f}") : ""
   ]))
   product_catalog_hash = fileexists("../src/data/updated_product_catalog(in).csv") ? filesha256("../src/data/updated_product_catalog(in).csv") : "missing"
+
+  deploy_to_appservice     = var.deployment_target == "appservice"
+  deploy_to_container_apps = var.deployment_target == "containerapps"
 }
 
 resource "azurerm_cosmosdb_account" "cosmos" {
@@ -124,6 +127,19 @@ resource "azapi_resource" "ai_foundry" {
   })
 }
 
+# Ensure allowProjectManagement is applied (some older API versions ignore it during create).
+# This PATCH uses a newer api-version that supports the property and updates the existing account in place.
+resource "azapi_update_resource" "ai_foundry_enable_project_mgmt" {
+  type                      = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  resource_id               = azapi_resource.ai_foundry.id
+
+  body = jsonencode({
+    properties = {
+      allowProjectManagement = true
+    }
+  })
+}
+
 resource "azapi_resource" "ai_project" {
   type                      = "Microsoft.CognitiveServices/accounts/projects@2025-06-01"
   name                      = local.ai_project_name
@@ -132,7 +148,7 @@ resource "azapi_resource" "ai_project" {
   schema_validation_enabled = false
   identity { type = "SystemAssigned" }
   body       = jsonencode({ properties = {} })
-  depends_on = [azapi_resource.ai_foundry]
+  depends_on = [azapi_update_resource.ai_foundry_enable_project_mgmt]
 }
 
 # === Real Multi-Agent Creation (ochartarotr) ===
@@ -276,7 +292,274 @@ resource "azurerm_container_registry" "acr" {
   ]
 }
 
+# Container Apps environment (alternative to App Service)
+resource "azurerm_container_app_environment" "app_env" {
+  count                        = local.deploy_to_container_apps ? 1 : 0
+  name                         = "${var.name_prefix}-${local.suffix}-cae"
+  location                     = var.location
+  resource_group_name          = azurerm_resource_group.rg.name
+  log_analytics_workspace_id   = azurerm_log_analytics_workspace.law.id
+}
+
+resource "azurerm_user_assigned_identity" "containerapp_identity" {
+  count               = local.deploy_to_container_apps ? 1 : 0
+  name                = "${var.name_prefix}-${local.suffix}-ca-id"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+}
+
+# Container Apps deployment (uses ACR image)
+resource "azurerm_container_app" "app" {
+  count                       = local.deploy_to_container_apps ? 1 : 0
+  name                        = "${var.name_prefix}-${local.suffix}-ca"
+  resource_group_name         = azurerm_resource_group.rg.name
+  container_app_environment_id = azurerm_container_app_environment.app_env[0].id
+  revision_mode               = "Single"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.containerapp_identity[0].id]
+  }
+
+  template {
+    container {
+      name   = "zava-chat-app"
+      image  = "${azurerm_container_registry.acr.login_server}/zava-chat-app:latest"
+      cpu    = 1
+      memory = "2Gi"
+
+      env {
+        name  = "WEBSITES_PORT"
+        value = "8000"
+      }
+
+      env {
+        name  = "USE_MULTI_AGENT"
+        value = var.enable_multi_agent ? "true" : "false"
+      }
+
+      env {
+        name  = "AZURE_AI_FOUNDRY_ENDPOINT"
+        value = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+      }
+      env {
+        name  = "AZURE_AI_PROJECT_NAME"
+        value = local.ai_project_name
+      }
+      env {
+        name  = "AZURE_AI_PROJECT_ENDPOINT"
+        value = "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
+      }
+      env {
+        name  = "AZURE_AI_AGENT_ENDPOINT"
+        value = "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
+      }
+      env {
+        name  = "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"
+        value = var.chat_model_deployment
+      }
+
+      env {
+        name  = "AZURE_OPENAI_CHAT_DEPLOYMENT"
+        value = var.chat_model_deployment
+      }
+      env {
+        name  = "AZURE_OPENAI_EMBEDDING_DEPLOYMENT"
+        value = "text-embedding-3-small"
+      }
+      env {
+        name  = "AZURE_OPENAI_ENDPOINT"
+        value = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+      }
+      env {
+        name  = "AZURE_OPENAI_API_VERSION"
+        value = "2024-02-01"
+      }
+
+      env {
+        name  = "gpt_endpoint"
+        value = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+      }
+      env {
+        name  = "gpt_deployment"
+        value = var.chat_model_deployment
+      }
+      env {
+        name  = "gpt_api_version"
+        value = "2024-12-01-preview"
+      }
+
+      env {
+        name  = "COSMOS_DB_ENDPOINT"
+        value = azurerm_cosmosdb_account.cosmos.endpoint
+      }
+      env {
+        name  = "COSMOS_DB_NAME"
+        value = local.cosmos_db_name
+      }
+      env {
+        name  = "COSMOS_DB_CONTAINER_NAME"
+        value = "product_catalog"
+      }
+      env {
+        name  = "COSMOS_SKIP_IF_EXISTS"
+        value = "true"
+      }
+
+      env {
+        name  = "SEARCH_SERVICE_ENDPOINT"
+        value = "https://${local.search_service_name}.search.windows.net"
+      }
+      env {
+        name  = "SEARCH_INDEX_NAME"
+        value = "products-index"
+      }
+
+      env {
+        name  = "STORAGE_ACCOUNT_NAME"
+        value = local.storage_account
+      }
+
+      env {
+        name  = "AZURE_SUBSCRIPTION_ID"
+        value = data.azurerm_client_config.current.subscription_id
+      }
+      env {
+        name  = "AZURE_RESOURCE_GROUP"
+        value = azurerm_resource_group.rg.name
+      }
+      env {
+        name  = "AZURE_LOCATION"
+        value = var.location
+      }
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = azurerm_user_assigned_identity.containerapp_identity[0].client_id
+      }
+
+      env {
+        name  = "CUSTOMER_ID"
+        value = "CUST001"
+      }
+
+      # Secrets (Key Vault references)
+      env {
+        name        = "SEARCH_SERVICE_KEY"
+        secret_name = "search-service-key"
+      }
+      env {
+        name        = "STORAGE_CONNECTION_STRING"
+        secret_name = "storage-connection-string"
+      }
+
+      # Cosmos auth: use AAD when local auth disabled
+      dynamic "env" {
+        for_each = var.enable_cosmos_local_auth ? [1] : []
+        content {
+          name        = "COSMOS_DB_KEY"
+          secret_name = "cosmos-primary-key"
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_cosmos_local_auth ? [] : [1]
+        content {
+          name  = "COSMOS_DB_KEY"
+          value = "AAD_AUTH"
+        }
+      }
+
+      # Agent IDs (non-secret) - set explicitly to avoid secret set drift
+      env {
+        name  = "AGENT_CORA_ID"
+        value = data.external.agents_state.result["agent_cora_id"]
+      }
+      env {
+        name  = "AGENT_INTERIOR_DESIGNER_ID"
+        value = data.external.agents_state.result["agent_interior_designer_id"]
+      }
+      env {
+        name  = "AGENT_INVENTORY_AGENT_ID"
+        value = data.external.agents_state.result["agent_inventory_agent_id"]
+      }
+      env {
+        name  = "AGENT_CUSTOMER_LOYALTY_ID"
+        value = data.external.agents_state.result["agent_customer_loyalty_id"]
+      }
+      env {
+        name  = "AGENT_CART_MANAGER_ID"
+        value = data.external.agents_state.result["agent_cart_manager_id"]
+      }
+      env {
+        name  = "cora"
+        value = data.external.agents_state.result["agent_cora_id"]
+      }
+      env {
+        name  = "interior_designer"
+        value = data.external.agents_state.result["agent_interior_designer_id"]
+      }
+      env {
+        name  = "inventory_agent"
+        value = data.external.agents_state.result["agent_inventory_agent_id"]
+      }
+      env {
+        name  = "customer_loyalty"
+        value = data.external.agents_state.result["agent_customer_loyalty_id"]
+      }
+      env {
+        name  = "cart_manager"
+        value = data.external.agents_state.result["agent_cart_manager_id"]
+      }
+    }
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 8000
+    transport        = "auto"
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  registry {
+    server               = azurerm_container_registry.acr.login_server
+    identity             = azurerm_user_assigned_identity.containerapp_identity[0].id
+  }
+
+  secret {
+    name                = "search-service-key"
+    key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/search-admin-key"
+    identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
+  }
+  secret {
+    name                = "storage-connection-string"
+    key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string"
+    identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
+  }
+  dynamic "secret" {
+    for_each = var.enable_cosmos_local_auth ? [1] : []
+    content {
+      name                = "cosmos-primary-key"
+      key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key"
+      identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
+    }
+  }
+
+  depends_on = [
+    azurerm_container_registry.acr,
+    azurerm_user_assigned_identity.containerapp_identity,
+    azurerm_role_assignment.kv_secrets_user_containerapp,
+    azurerm_role_assignment.containerapp_acr_pull,
+    null_resource.docker_image_build,
+    null_resource.set_kv_secrets,
+    null_resource.set_agent_kv_secrets
+  ]
+}
+
 resource "azurerm_container_registry_webhook" "webhook" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = "${local.registry_name}webhook"
   resource_group_name = azurerm_resource_group.rg.name
   registry_name       = azurerm_container_registry.acr.name
@@ -408,18 +691,20 @@ resource "null_resource" "docker_image_build" {
 }
 
 resource "azurerm_service_plan" "appserviceplan" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = local.app_service_plan
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
   os_type             = "Linux"
-  sku_name            = "B1"  # Basic tier to avoid Standard VM quota issues
+  sku_name            = var.app_service_sku
 }
 
 resource "azurerm_linux_web_app" "app" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = local.web_app_name
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
-  service_plan_id     = azurerm_service_plan.appserviceplan.id
+  service_plan_id     = azurerm_service_plan.appserviceplan[0].id
   https_only          = true
 
   identity {
@@ -449,19 +734,18 @@ resource "azurerm_linux_web_app" "app" {
 
     # GPT Configuration (using managed identity)
     gpt_endpoint                        = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-    gpt_deployment                      = "gpt-4o-mini"
+    gpt_deployment                      = var.chat_model_deployment
     gpt_api_version                     = "2024-12-01-preview"
 
     # MSFT Foundry Configuration (using managed identity)
     AZURE_AI_FOUNDRY_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_AI_PROJECT_NAME               = local.ai_project_name
-    AZURE_AI_PROJECT_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-    AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "gpt-4o-mini"
+    AZURE_AI_PROJECT_ENDPOINT           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
+    AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = var.chat_model_deployment
 
     # MSFT Foundry OpenAI Configuration (using managed identity)
-    AZURE_OPENAI_CHAT_DEPLOYMENT        = "gpt-4o-mini"
+    AZURE_OPENAI_CHAT_DEPLOYMENT        = var.chat_model_deployment
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT   = "text-embedding-3-small"
-    AZURE_OPENAI_IMAGE_DEPLOYMENT       = "dall-e-3"
     AZURE_OPENAI_ENDPOINT               = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
     AZURE_OPENAI_API_VERSION            = "2024-02-01"
 
@@ -478,6 +762,11 @@ resource "azurerm_linux_web_app" "app" {
     AGENT_INVENTORY_AGENT_ID            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
     AGENT_CUSTOMER_LOYALTY_ID           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
     AGENT_CART_MANAGER_ID               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
+    cora                                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
+    interior_designer                   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
+    inventory_agent                     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
+    customer_loyalty                    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
+    cart_manager                        = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
     CUSTOMER_ID                         = "CUST001"
   }
 
@@ -490,9 +779,10 @@ resource "azurerm_linux_web_app" "app" {
 
 # Grant AcrPull role to Web App managed identity so it can pull private images without admin credentials
 resource "azurerm_role_assignment" "webapp_acr_pull" {
+  count                = local.deploy_to_appservice ? 1 : 0
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_id         = azurerm_linux_web_app.app[0].identity[0].principal_id
   depends_on = [
     azurerm_linux_web_app.app,
     azurerm_container_registry.acr
@@ -507,44 +797,74 @@ resource "azurerm_key_vault" "kv" {
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
   soft_delete_retention_days = 7
-  purge_protection_enabled  = false
-  enable_rbac_authorization = false
+  purge_protection_enabled  = true
+  enable_rbac_authorization = true
+  public_network_access_enabled = true
 
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = local.principal_id
-    secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
+  network_acls {
+    default_action = "Allow"
+    bypass         = "AzureServices"
   }
 
   tags = { purpose = "multi-agent-ai-secrets" }
 }
 
+# Ensure Key Vault public access is enabled before data-plane secret reads
+resource "null_resource" "enable_kv_public_access" {
+  depends_on = [azurerm_key_vault.kv]
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      Write-Host "Ensuring Key Vault public access is enabled..."
+      az keyvault update `
+        --name "${azurerm_key_vault.kv.name}" `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --public-network-access Enabled `
+        --default-action Allow `
+        --bypass AzureServices | Out-Null
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+
+  triggers = {
+    always_run = timestamp()
+  }
+}
+
 # Data source to retrieve the web app identity after it's created/updated
 data "azurerm_linux_web_app" "app_identity" {
-  name                = azurerm_linux_web_app.app.name
+  count               = local.deploy_to_appservice ? 1 : 0
+  name                = azurerm_linux_web_app.app[0].name
   resource_group_name = azurerm_resource_group.rg.name
   depends_on          = [azurerm_linux_web_app.app]
 }
 
-# Access policy for Web App managed identity to read secrets
-resource "azurerm_key_vault_access_policy" "app_policy" {
-  key_vault_id = azurerm_key_vault.kv.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
-  secret_permissions = ["Get"]
-  depends_on = [azurerm_linux_web_app.app]
+# RBAC role assignments for Key Vault access
+resource "azurerm_role_assignment" "kv_secrets_officer_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = local.principal_id
 }
 
-# Populate Key Vault secrets (Cosmos key, Search key, Storage connection)
-# Key Vault Secrets as Terraform resources (provides version for references)
+resource "azurerm_role_assignment" "kv_secrets_user_containerapp" {
+  count                = local.deploy_to_container_apps ? 1 : 0
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  depends_on           = [azurerm_user_assigned_identity.containerapp_identity]
+}
+
+resource "azurerm_role_assignment" "kv_secrets_user_webapp" {
+  count                = local.deploy_to_appservice ? 1 : 0
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = data.azurerm_linux_web_app.app_identity[0].identity[0].principal_id
+  depends_on           = [data.azurerm_linux_web_app.app_identity]
+}
+
+# Populate Key Vault secrets via CLI to avoid data-plane read failures
 # Note: AI Foundry now uses managed identity instead of keys
-
-resource "azurerm_key_vault_secret" "search_admin_key" {
-  name         = "search-admin-key"
-  value        = jsondecode(data.azapi_resource_action.search_admin_keys[0].output).primaryKey
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
-}
 
 # Fetch storage keys unconditionally
 data "azapi_resource_action" "storage_keys_unconditional" {
@@ -556,19 +876,34 @@ data "azapi_resource_action" "storage_keys_unconditional" {
   depends_on             = [azapi_resource.storage]
 }
 
-resource "azurerm_key_vault_secret" "storage_connection_string" {
-  name         = "storage-connection-string"
-  value        = "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net"
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.azapi_resource_action.storage_keys_unconditional]
-}
+resource "null_resource" "set_kv_secrets" {
+  depends_on = [
+    azurerm_key_vault.kv,
+    azurerm_role_assignment.kv_secrets_officer_user,
+    null_resource.enable_kv_public_access,
+    data.azapi_resource_action.search_admin_keys,
+    data.azapi_resource_action.storage_keys_unconditional,
+    data.azapi_resource_action.cosmos_keys
+  ]
 
-resource "azurerm_key_vault_secret" "cosmos_primary_key" {
-  count        = var.enable_cosmos_local_auth ? 1 : 0
-  name         = "cosmos-primary-key"
-  value        = jsondecode(data.azapi_resource_action.cosmos_keys[0].output).primaryMasterKey
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
+  provisioner "local-exec" {
+    command     = <<-EOT
+      $kv = "${azurerm_key_vault.kv.name}"
+      Write-Host "Setting Key Vault secrets (search/storage/cosmos/agent-endpoint)..."
+      az keyvault secret set --vault-name $kv --name "search-admin-key" --value "${jsondecode(data.azapi_resource_action.search_admin_keys[0].output).primaryKey}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "storage-connection-string" --value "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net" | Out-Null
+      if (${var.enable_cosmos_local_auth ? "$true" : "$false"}) {
+        az keyvault secret set --vault-name $kv --name "cosmos-primary-key" --value "${jsondecode(data.azapi_resource_action.cosmos_keys[0].output).primaryMasterKey}" | Out-Null
+      }
+      az keyvault secret set --vault-name $kv --name "agent-endpoint" --value "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}" | Out-Null
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+
+  triggers = {
+    always_run = timestamp()
+  }
 }
 
 # External data source for agents state
@@ -577,56 +912,41 @@ data "external" "agents_state" {
   depends_on = [null_resource.deploy_multi_agents]
 }
 
-# Store agent IDs in Key Vault
-resource "azurerm_key_vault_secret" "agent_cora_id" {
-  name         = "agent-cora-id"
-  value        = data.external.agents_state.result["agent_cora_id"]
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
-}
+# Store agent IDs in Key Vault via CLI
+resource "null_resource" "set_agent_kv_secrets" {
+  depends_on = [
+    azurerm_key_vault.kv,
+    azurerm_role_assignment.kv_secrets_officer_user,
+    null_resource.enable_kv_public_access,
+    data.external.agents_state
+  ]
 
-resource "azurerm_key_vault_secret" "agent_interior_designer_id" {
-  name         = "agent-interior-designer-id"
-  value        = data.external.agents_state.result["agent_interior_designer_id"]
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
-}
+  provisioner "local-exec" {
+    command     = <<-EOT
+      $kv = "${azurerm_key_vault.kv.name}"
+      Write-Host "Setting Key Vault agent ID secrets..."
+      az keyvault secret set --vault-name $kv --name "agent-cora-id" --value "${data.external.agents_state.result["agent_cora_id"]}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "agent-interior-designer-id" --value "${data.external.agents_state.result["agent_interior_designer_id"]}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "agent-inventory-agent-id" --value "${data.external.agents_state.result["agent_inventory_agent_id"]}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "agent-customer-loyalty-id" --value "${data.external.agents_state.result["agent_customer_loyalty_id"]}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "agent-cart-manager-id" --value "${data.external.agents_state.result["agent_cart_manager_id"]}" | Out-Null
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
 
-resource "azurerm_key_vault_secret" "agent_inventory_agent_id" {
-  name         = "agent-inventory-agent-id"
-  value        = data.external.agents_state.result["agent_inventory_agent_id"]
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
-}
-
-resource "azurerm_key_vault_secret" "agent_customer_loyalty_id" {
-  name         = "agent-customer-loyalty-id"
-  value        = data.external.agents_state.result["agent_customer_loyalty_id"]
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
-}
-
-resource "azurerm_key_vault_secret" "agent_cart_manager_id" {
-  name         = "agent-cart-manager-id"
-  value        = data.external.agents_state.result["agent_cart_manager_id"]
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
-}
-
-# Store agent endpoint in Key Vault (transformed to services.ai.azure.com)
-resource "azurerm_key_vault_secret" "agent_endpoint" {
-  name         = "agent-endpoint"
-  value        = "https://${local.ai_foundry_name}.services.ai.azure.com/models"
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
+  triggers = {
+    always_run = timestamp()
+  }
 }
 
 # App Service Plan autoscale
 resource "azurerm_monitor_autoscale_setting" "appservice_autoscale" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = "${var.name_prefix}-${local.suffix}-asp-autoscale"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
-  target_resource_id  = azurerm_service_plan.appserviceplan.id
+  target_resource_id  = azurerm_service_plan.appserviceplan[0].id
 
   profile {
     name = "default"
@@ -639,7 +959,7 @@ resource "azurerm_monitor_autoscale_setting" "appservice_autoscale" {
     rule {
       metric_trigger {
         metric_name        = "CpuPercentage"
-        metric_resource_id = azurerm_service_plan.appserviceplan.id
+        metric_resource_id = azurerm_service_plan.appserviceplan[0].id
         time_grain         = "PT1M"
         statistic          = "Average"
         time_window        = "PT5M"
@@ -658,7 +978,7 @@ resource "azurerm_monitor_autoscale_setting" "appservice_autoscale" {
     rule {
       metric_trigger {
         metric_name        = "CpuPercentage"
-        metric_resource_id = azurerm_service_plan.appserviceplan.id
+        metric_resource_id = azurerm_service_plan.appserviceplan[0].id
         time_grain         = "PT1M"
         statistic          = "Average"
         time_window        = "PT10M"
@@ -688,9 +1008,10 @@ resource "azurerm_monitor_autoscale_setting" "appservice_autoscale" {
 
 # Alerts: App Service 5xx & CPU, Cosmos 429 throttles
 resource "azurerm_monitor_metric_alert" "app_5xx" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = "${var.name_prefix}-${local.suffix}-app-5xx-alert"
   resource_group_name = azurerm_resource_group.rg.name
-  scopes              = [azurerm_linux_web_app.app.id]
+  scopes              = [azurerm_linux_web_app.app[0].id]
   description         = "Alert on high 5xx responses"
   severity            = 2
   frequency           = "PT5M"
@@ -705,9 +1026,10 @@ resource "azurerm_monitor_metric_alert" "app_5xx" {
 }
 
 resource "azurerm_monitor_metric_alert" "app_cpu" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = "${var.name_prefix}-${local.suffix}-app-cpu-alert"
   resource_group_name = azurerm_resource_group.rg.name
-  scopes              = [azurerm_service_plan.appserviceplan.id]
+  scopes              = [azurerm_service_plan.appserviceplan[0].id]
   description         = "Alert on high CPU"
   severity            = 3
   frequency           = "PT5M"
@@ -740,6 +1062,7 @@ resource "azurerm_monitor_metric_alert" "cosmos_throttle" {
 
 # Portal Dashboard aggregating key metrics
 resource "azurerm_portal_dashboard" "observability" {
+  count               = local.deploy_to_appservice ? 1 : 0
   name                = "${var.name_prefix}-${local.suffix}-dashboard"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
@@ -755,7 +1078,7 @@ resource "azurerm_portal_dashboard" "observability" {
             metadata = {
               inputs = [
                 { name = "resourceType", value = "microsoft.web/sites" },
-                { name = "resource", value = azurerm_linux_web_app.app.id },
+                { name = "resource", value = azurerm_linux_web_app.app[0].id },
                 { name = "chartSettings", value = jsonencode({ version = "Workspace" }) }
               ]
               type = "Extension/HubsExtension/PartType/MonitorChartPart"
@@ -764,7 +1087,7 @@ resource "azurerm_portal_dashboard" "observability" {
                   version = "1.0.0"
                   chart = {
                     title      = "App Service Requests"
-                    metrics    = [{ resourceMetadata = { id = azurerm_linux_web_app.app.id }, name = "Requests", aggregationType = "Total" }]
+                    metrics    = [{ resourceMetadata = { id = azurerm_linux_web_app.app[0].id }, name = "Requests", aggregationType = "Total" }]
                     timespan   = { duration = "PT1H" }
                     visualization = { chartType = "Line" }
                   }
@@ -777,7 +1100,7 @@ resource "azurerm_portal_dashboard" "observability" {
             metadata = {
               inputs = [
                 { name = "resourceType", value = "microsoft.web/serverfarms" },
-                { name = "resource", value = azurerm_service_plan.appserviceplan.id }
+                { name = "resource", value = azurerm_service_plan.appserviceplan[0].id }
               ]
               type = "Extension/HubsExtension/PartType/MonitorChartPart"
               settings = {
@@ -785,7 +1108,7 @@ resource "azurerm_portal_dashboard" "observability" {
                   version = "1.0.0"
                   chart = {
                     title   = "CPU Percentage"
-                    metrics = [{ resourceMetadata = { id = azurerm_service_plan.appserviceplan.id }, name = "CpuPercentage", aggregationType = "Average" }]
+                    metrics = [{ resourceMetadata = { id = azurerm_service_plan.appserviceplan[0].id }, name = "CpuPercentage", aggregationType = "Average" }]
                     timespan = { duration = "PT1H" }
                   }
                 }
@@ -862,6 +1185,22 @@ resource "azapi_resource" "cosmos_user_data_contributor" {
   })
 }
 
+# Assign Cosmos DB Data Contributor role to Container App managed identity
+resource "azapi_resource" "containerapp_cosmos_data_contributor" {
+  count     = local.deploy_to_container_apps ? 1 : 0
+  type      = "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15"
+  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_user_assigned_identity.containerapp_identity[0].principal_id}-${local.cosmos_db_data_contributor_role_id}")
+  parent_id = azurerm_cosmosdb_account.cosmos.id
+  body = jsonencode({
+    properties = {
+      roleDefinitionId = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/${local.cosmos_db_data_contributor_role_id}"
+      principalId      = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+      scope            = azurerm_cosmosdb_account.cosmos.id
+    }
+  })
+  depends_on = [azurerm_container_app.app]
+}
+
 # Role assignments for Search managed identity
 resource "azurerm_role_assignment" "search_cosmos_account_reader" {
   scope              = azurerm_cosmosdb_account.cosmos.id
@@ -920,19 +1259,49 @@ resource "azurerm_role_assignment" "search_project_contributor" {
 
 # Role assignments for Web App managed identity to access AI Foundry
 resource "azurerm_role_assignment" "webapp_foundry_openai_user" {
+  count              = local.deploy_to_appservice ? 1 : 0
   scope              = azapi_resource.ai_foundry.id
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
-  principal_id       = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
+  principal_id       = data.azurerm_linux_web_app.app_identity[0].identity[0].principal_id
   principal_type     = "ServicePrincipal"
   depends_on         = [azurerm_linux_web_app.app]
 }
 
 resource "azurerm_role_assignment" "webapp_project_openai_user" {
+  count              = local.deploy_to_appservice ? 1 : 0
   scope              = azapi_resource.ai_project.id
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
-  principal_id       = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
+  principal_id       = data.azurerm_linux_web_app.app_identity[0].identity[0].principal_id
   principal_type     = "ServicePrincipal"
   depends_on         = [azurerm_linux_web_app.app]
+}
+
+# Role assignments for Container App managed identity to access AI Foundry
+resource "azurerm_role_assignment" "containerapp_foundry_openai_user" {
+  count              = local.deploy_to_container_apps ? 1 : 0
+  scope              = azapi_resource.ai_foundry.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
+  principal_id       = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_container_app.app]
+}
+
+resource "azurerm_role_assignment" "containerapp_project_openai_user" {
+  count              = local.deploy_to_container_apps ? 1 : 0
+  scope              = azapi_resource.ai_project.id
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
+  principal_id       = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_container_app.app]
+}
+
+# Grant AcrPull role to Container App managed identity for ACR pulls
+resource "azurerm_role_assignment" "containerapp_acr_pull" {
+  count                = local.deploy_to_container_apps ? 1 : 0
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  depends_on           = [azurerm_user_assigned_identity.containerapp_identity, azurerm_container_registry.acr]
 }
 
 # Storage account permissions for MSFT Foundry project
@@ -970,23 +1339,43 @@ resource "null_resource" "ai_model_deployments" {
       Start-Sleep -Seconds 30
       
       try {
-        # Create gpt-4o-mini deployment
-        Write-Host "Creating gpt-4o-mini deployment..."
+        # Create model-router deployment (single chat deployment)
+        Write-Host "Creating model-router deployment..."
         az cognitiveservices account deployment create `
           --resource-group "${azurerm_resource_group.rg.name}" `
           --name "${local.ai_foundry_name}" `
-          --deployment-name "gpt-4o-mini" `
-          --model-name "gpt-4o-mini" `
-          --model-version "2024-07-18" `
+          --deployment-name "model-router" `
+          --model-name "model-router" `
+          --model-version "2025-11-18" `
           --model-format "OpenAI" `
           --sku-capacity 10 `
           --sku-name "GlobalStandard"
         
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "gpt-4o-mini deployment created successfully"
+            Write-Host "model-router deployment created successfully"
           } else {
-            Write-Host "gpt-4o-mini deployment may already exist or failed to create"
-          }        # Create text-embedding-3-small deployment
+            Write-Host "model-router deployment may already exist or failed to create"
+          }
+
+          # Create gpt-4o-mini deployment (fallback chat model)
+          Write-Host "Creating gpt-4o-mini deployment..."
+          az cognitiveservices account deployment create `
+            --resource-group "${azurerm_resource_group.rg.name}" `
+            --name "${local.ai_foundry_name}" `
+            --deployment-name "gpt-4o-mini" `
+            --model-name "gpt-4o-mini" `
+            --model-version "2024-07-18" `
+            --model-format "OpenAI" `
+            --sku-capacity 10 `
+            --sku-name "GlobalStandard"
+        
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "gpt-4o-mini deployment created successfully"
+            } else {
+              Write-Host "gpt-4o-mini deployment may already exist or failed to create"
+            }
+
+        # Create text-embedding-3-small deployment
         Write-Host "Creating text-embedding-3-small deployment..."
         az cognitiveservices account deployment create `
           --resource-group "${azurerm_resource_group.rg.name}" `
@@ -1003,56 +1392,6 @@ resource "null_resource" "ai_model_deployments" {
           } else {
             Write-Host "text-embedding-3-small deployment may already exist or failed to create"
           }
-        
-        # Create dall-e-3 deployment for image generation
-        Write-Host "Creating dall-e-3 deployment..."
-        try {
-          az cognitiveservices account deployment create `
-            --resource-group "${azurerm_resource_group.rg.name}" `
-            --name "${local.ai_foundry_name}" `
-            --deployment-name "dall-e-3" `
-            --model-name "dall-e-3" `
-            --model-version "3.0" `
-            --model-format "OpenAI" `
-            --sku-capacity 1 `
-            --sku-name "Standard"
-          
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "dall-e-3 deployment created successfully"
-            $dalleAvailable = $true
-          } else {
-            Write-Host "dall-e-3 model not available in this region/tier, skipping"
-            $dalleAvailable = $false
-          }
-        } catch {
-          Write-Host "dall-e-3 model not supported in this region, skipping"
-          $dalleAvailable = $false
-        }
-        
-        # Create phi-4 deployment
-        Write-Host "Creating phi-4 deployment..."
-        try {
-          az cognitiveservices account deployment create `
-            --resource-group "${azurerm_resource_group.rg.name}" `
-            --name "${local.ai_foundry_name}" `
-            --deployment-name "phi-4" `
-            --model-name "phi-4" `
-            --model-version "1" `
-            --model-format "OpenAI" `
-            --sku-capacity 5 `
-            --sku-name "GlobalStandard"
-          
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "phi-4 deployment created successfully"
-            $phi4Available = $true
-          } else {
-            Write-Host "phi-4 model not available in this region/tier, skipping"
-            $phi4Available = $false
-          }
-        } catch {
-          Write-Host "phi-4 model not supported, skipping"
-          $phi4Available = $false
-        }
         
         # List all deployments to verify
         Write-Host "`nCurrent model deployments:"
@@ -1122,7 +1461,7 @@ resource "azapi_resource" "storage_connection" {
 
   depends_on = [
     azapi_resource.storage,
-    azapi_resource.ai_foundry
+    azapi_update_resource.ai_foundry_enable_project_mgmt
   ]
 
   body = jsonencode({
@@ -1152,7 +1491,7 @@ resource "azapi_resource" "app_insights_connection" {
 
   depends_on = [
     azurerm_application_insights.appinsights,
-    azapi_resource.ai_foundry
+    azapi_update_resource.ai_foundry_enable_project_mgmt
   ]
 
   body = jsonencode({
@@ -1182,7 +1521,7 @@ resource "azapi_resource" "search_connection" {
 
   depends_on = [
     azurerm_search_service.search,
-    azapi_resource.ai_foundry
+    azapi_update_resource.ai_foundry_enable_project_mgmt
   ]
 
   body = jsonencode({
@@ -1213,7 +1552,7 @@ resource "azapi_resource" "cosmos_connection" {
 
   depends_on = [
     azurerm_cosmosdb_account.cosmos,
-    azapi_resource.ai_foundry
+    azapi_update_resource.ai_foundry_enable_project_mgmt
   ]
 
   body = jsonencode({
@@ -1312,41 +1651,40 @@ resource "null_resource" "create_env_file" {
       # For OpenAI models, use the cognitive services endpoint
       $openAiEndpoint = $rawAiFoundryEndpoint
       # For Agents API, use the corrected services.ai.azure.com domain
-      $agentsEndpoint = $rawAiFoundryEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $agentsEndpointBase = $rawAiFoundryEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $agentsEndpointBase = $agentsEndpointBase.TrimEnd("/")
+      $agentsProjectEndpoint = "$agentsEndpointBase/api/projects/${local.ai_project_name}"
       
       Write-Host "OpenAI Endpoint: $openAiEndpoint"
-      Write-Host "Agents API Endpoint: $agentsEndpoint"
+      Write-Host "Agents API Endpoint: $agentsProjectEndpoint"
       
       # Fetch secrets from Key Vault for local dev (avoid embedding in Terraform state)
       $kv = "${azurerm_key_vault.kv.name}"
       $aiFoundryKey = az keyvault secret show --vault-name $kv --name ai-foundry-key --query value -o tsv
       $searchKey = az keyvault secret show --vault-name $kv --name search-admin-key --query value -o tsv
-      if (${var.enable_cosmos_local_auth}) {
+      if (${var.enable_cosmos_local_auth ? "$true" : "$false"}) {
         $cosmosKey = az keyvault secret show --vault-name $kv --name cosmos-primary-key --query value -o tsv
       } else { $cosmosKey = "AAD_AUTH" }
       $storageConnectionString = az keyvault secret show --vault-name $kv --name storage-connection-string --query value -o tsv
       
       # Create .env file content
-      if ($phi4Available) {
-        $envContent = @"
+      $envContent = @"
 # Azure AI Foundry Configuration
 AZURE_AI_FOUNDRY_ENDPOINT=$openAiEndpoint
 AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
 AZURE_AI_PROJECT_NAME=${local.ai_project_name}
-AZURE_AI_AGENT_ENDPOINT=$agentsEndpoint
+AZURE_AI_AGENT_ENDPOINT=$agentsProjectEndpoint
 
 # Azure OpenAI Model Deployments
-AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
+  AZURE_OPENAI_CHAT_DEPLOYMENT=${var.chat_model_deployment}
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
-AZURE_OPENAI_PHI_DEPLOYMENT=phi-4
-AZURE_OPENAI_IMAGE_DEPLOYMENT=dall-e-3
 AZURE_OPENAI_ENDPOINT=$openAiEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
 AZURE_OPENAI_API_VERSION=2024-02-01
 
 # GPT Model Configuration (for single-agent chat)
 gpt_endpoint=$openAiEndpoint
-gpt_deployment=gpt-4o-mini
+  gpt_deployment=${var.chat_model_deployment}
 gpt_api_key=$aiFoundryKey
 gpt_api_version=2024-02-01
 
@@ -1377,70 +1715,8 @@ AZURE_LOCATION=${var.location}
 
 # Multi-Agent Configuration
 USE_MULTI_AGENT=true
-AZURE_AI_PROJECT_ENDPOINT=$agentsEndpoint
-AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=gpt-4o-mini
-
-# Agent IDs (will be updated by deploy_real_agents.py after creation)
-cora=asst_local_cora
-interior_designer=asst_local_interior_design
-inventory_agent=asst_local_inventory
-customer_loyalty=asst_local_customer_loyalty
-cart_manager=asst_local_cart_manager
-
-# Customer Configuration
-CUSTOMER_ID=CUST001
-"@
-      } else {
-        $envContent = @"
-# Azure AI Foundry Configuration
-AZURE_AI_FOUNDRY_ENDPOINT=$openAiEndpoint
-AZURE_AI_FOUNDRY_API_KEY=$aiFoundryKey
-AZURE_AI_PROJECT_NAME=${local.ai_project_name}
-AZURE_AI_AGENT_ENDPOINT=$aiFoundryEndpoint
-
-# Azure OpenAI Model Deployments
-AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
-AZURE_OPENAI_IMAGE_DEPLOYMENT=dall-e-3
-AZURE_OPENAI_ENDPOINT=$openAiEndpoint
-AZURE_OPENAI_API_KEY=$aiFoundryKey
-AZURE_OPENAI_API_VERSION=2024-02-01
-
-# GPT Model Configuration (for single-agent chat)
-gpt_endpoint=$openAiEndpoint
-gpt_deployment=gpt-4o-mini
-gpt_api_key=$aiFoundryKey
-gpt_api_version=2024-02-01
-
-# Azure Cosmos DB Configuration
-COSMOS_DB_ENDPOINT=${azurerm_cosmosdb_account.cosmos.endpoint}
-COSMOS_DB_KEY=$cosmosKey
-COSMOS_DB_NAME=${local.cosmos_db_name}
-COSMOS_DB_CONTAINER_NAME=product_catalog
-COSMOS_SKIP_IF_EXISTS=true
-COSMOS_FORCE_INGEST=false
-
-# Azure AI Search Configuration
-SEARCH_SERVICE_ENDPOINT=https://${local.search_service_name}.search.windows.net
-SEARCH_SERVICE_KEY=$searchKey
-SEARCH_INDEX_NAME=products-index
-
-# Azure Storage Configuration
-STORAGE_ACCOUNT_NAME=${local.storage_account}
-STORAGE_CONNECTION_STRING=$storageConnectionString
-
-# Azure Application Insights
-APPLICATION_INSIGHTS_CONNECTION_STRING=${azurerm_application_insights.appinsights.connection_string}
-
-# Azure Resource Information
-AZURE_SUBSCRIPTION_ID=${data.azurerm_client_config.current.subscription_id}
-AZURE_RESOURCE_GROUP=${azurerm_resource_group.rg.name}
-AZURE_LOCATION=${var.location}
-
-# Multi-Agent Configuration
-USE_MULTI_AGENT=true
-AZURE_AI_PROJECT_ENDPOINT=$aiFoundryEndpoint
-AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_AI_PROJECT_ENDPOINT=$agentsProjectEndpoint
+AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=${var.chat_model_deployment}
 
 # Local Pseudo Agent IDs (no remote provisioning required)
 cora=asst_local_cora
@@ -1452,18 +1728,13 @@ cart_manager=asst_local_cart_manager
 # Customer Configuration
 CUSTOMER_ID=CUST001
 "@
-      }
       
       # Write .env file
       $envContent | Out-File -FilePath "../src/.env" -Encoding UTF8
       
       Write-Host ".env file created successfully at ../src/.env"
       Write-Host "Environment variables configured for:"
-      if ($phi4Available) {
-        Write-Host "  - Models: gpt-4o-mini, text-embedding-3-small, phi-4"
-      } else {
-        Write-Host "  - Models: gpt-4o-mini, text-embedding-3-small (phi-4 not available)"
-      }
+      Write-Host "  - Models: ${var.chat_model_deployment}, text-embedding-3-small"
       Write-Host "  - MSFT Foundry: ${local.ai_foundry_name}"
       Write-Host "  - Azure AI Project: ${local.ai_project_name}"
       Write-Host "  - Cosmos DB: ${local.cosmos_account_name}"
@@ -1714,7 +1985,7 @@ resource "null_resource" "deploy_multi_agents" {
       }
       
       Write-Host "Installing required Azure SDK packages..."
-      & $pythonCmd -m pip install -q azure-ai-projects azure-identity python-dotenv
+      & $pythonCmd -m pip install -q --pre 'azure-ai-projects>=2.0.0b1' azure-identity python-dotenv
       
       if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to install required packages"
@@ -1726,15 +1997,21 @@ resource "null_resource" "deploy_multi_agents" {
       Write-Host ""
       
       # Set up environment for agent deployment with corrected endpoint
-      $rawEndpoint = "${azapi_resource.ai_foundry.output}" | ConvertFrom-Json | Select-Object -ExpandProperty properties | Select-Object -ExpandProperty endpoint
-      # Fix domain for agents API
-      $agentEndpoint = $rawEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $rawEndpoint = az cognitiveservices account show `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.ai_foundry_name}" `
+        --query "properties.endpoint" `
+        --output tsv
+      # Fix domain for agents API and attach project path
+      $agentEndpointBase = $rawEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $agentEndpoint = "$agentEndpointBase/api/projects/${local.ai_project_name}"
       $env:AZURE_AI_PROJECT_ENDPOINT = $agentEndpoint
       Write-Host "Using Agents API endpoint: $agentEndpoint"
       
       # Deploy agents using Python script
       Write-Host "Deploying 6 agents to MSFT Foundry..."
       $agentScriptPath = Join-Path (Split-Path $PWD.Path -Parent) "src\app\agents\deploy_real_agents.py"
+      $env:PYTHONPATH = Join-Path (Split-Path $PWD.Path -Parent) "src"
       
       if (!(Test-Path $agentScriptPath)) {
         Write-Host "ERROR: Agent deployment script not found: $agentScriptPath"
@@ -1759,7 +2036,7 @@ resource "null_resource" "deploy_multi_agents" {
         $envPath = Join-Path (Split-Path $PWD.Path -Parent) "src/.env"
         if (Test-Path $envPath) {
           Write-Host "Updating Web App app settings with real agent IDs..."
-          $agentVars = @("cora","interior_designer","inventory_agent","customer_loyalty","cart_manager")
+          $agentVars = @("cora","interior_designer","inventory_agent","customer_loyalty","cart_manager","product_management")
           $settingsArgs = @()
           foreach ($var in $agentVars) {
             $line = Select-String -Path $envPath -Pattern "^$var=" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1772,16 +2049,18 @@ resource "null_resource" "deploy_multi_agents" {
             }
           }
           if ($settingsArgs.Count -gt 0) {
-            # Ensure image deployment variable present
-            $settingsArgs += "AZURE_OPENAI_IMAGE_DEPLOYMENT=dall-e-3"
-            az webapp config appsettings set `
-              --resource-group ${azurerm_resource_group.rg.name} `
-              --name ${local.web_app_name} `
-              --settings $settingsArgs | Out-Null
-            Write-Host "[OK] Web App app settings updated with real agent IDs"
-            Write-Host "Restarting Web App to apply settings..."
-            az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-            Write-Host "[OK] Web App restarted"
+            if ("${var.deployment_target}" -eq "appservice") {
+              az webapp config appsettings set `
+                --resource-group ${azurerm_resource_group.rg.name} `
+                --name ${local.web_app_name} `
+                --settings $settingsArgs | Out-Null
+              Write-Host "[OK] Web App app settings updated with real agent IDs"
+              Write-Host "Restarting Web App to apply settings..."
+              az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+              Write-Host "[OK] Web App restarted"
+            } else {
+              Write-Host "[INFO] Skipping Web App updates (deployment_target=containerapps)"
+            }
           } else {
             Write-Host "No real agent IDs found to update (still using local simulation)."
           }
@@ -1793,9 +2072,13 @@ resource "null_resource" "deploy_multi_agents" {
       Write-Host ""
       Write-Host "Docker image already built by standalone resource."
       Write-Host ""
-      Write-Host "Restarting Web App to ensure latest configuration..."
-      az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
-      Write-Host "[OK] Web App restarted"
+      if ("${var.deployment_target}" -eq "appservice") {
+        Write-Host "Restarting Web App to ensure latest configuration..."
+        az webapp restart --resource-group ${azurerm_resource_group.rg.name} --name ${local.web_app_name} | Out-Null
+        Write-Host "[OK] Web App restarted"
+      } else {
+        Write-Host "[INFO] Skipping Web App restart (deployment_target=containerapps)"
+      }
       Write-Host ""
       Write-Host "Multi-agent deployment complete!"
     EOT
@@ -1874,7 +2157,7 @@ resource "null_resource" "verify_real_agents" {
 
 # Install Docker Desktop if not present and deploy chat app using containers
 resource "null_resource" "deploy_chat_app" {
-  count = var.enable_data_pipeline ? 1 : 0
+  count = (var.enable_data_pipeline && local.deploy_to_appservice) ? 1 : 0
 
   depends_on = [
     null_resource.verify_single_agent_app,
@@ -1975,7 +2258,7 @@ resource "null_resource" "deploy_chat_app" {
         --settings `
           WEBSITES_PORT=8000 `
           gpt_endpoint="$aiFoundryEndpoint" `
-          gpt_deployment="gpt-4o-mini" `
+          gpt_deployment="${var.chat_model_deployment}" `
           gpt_api_key="$aiFoundryKey" `
           gpt_api_version="2024-12-01-preview" | Out-Null
       
@@ -2010,7 +2293,7 @@ resource "null_resource" "deploy_chat_app" {
       Write-Host ""
       Write-Host "   [OK] Container: ${local.registry_name}.azurecr.io/zava-chat-app:latest"
       Write-Host "   [OK] SDK: azure-ai-inference (MSFT Foundry)"
-      Write-Host "   [OK] Model: gpt-4o-mini"
+      Write-Host "   [OK] Model: ${var.chat_model_deployment}"
       Write-Host "   [OK] Endpoint: .services.ai.azure.com/models (auto-converted)"
       Write-Host ""
       Write-Host "   Note: App may take 1-2 minutes to fully initialize on first start"
@@ -2038,7 +2321,7 @@ resource "null_resource" "deploy_chat_app" {
 
 # Remote multi-agent verification (runs after deployment). Hits /agents endpoint.
 resource "null_resource" "verify_multi_agent_remote" {
-  count = var.enable_multi_agent ? 1 : 0
+  count = (var.enable_multi_agent && local.deploy_to_appservice) ? 1 : 0
 
   depends_on = [
     null_resource.deploy_multi_agents,
@@ -2085,7 +2368,7 @@ resource "null_resource" "verify_multi_agent_remote" {
   }
 
   triggers = {
-    web_app_id   = azurerm_linux_web_app.app.id
+    web_app_id   = azurerm_linux_web_app.app[0].id
     docker_hash  = local.dockerfile_hash
     agents_code  = filesha256("../src/chat_app_multi_agent.py")
   }
@@ -2405,7 +2688,7 @@ try {
 
 # A2A Monitoring Integration with Azure
 resource "azurerm_monitor_action_group" "a2a_alerts" {
-  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
   
   name                = "${local.web_app_name}-a2a-alerts"
   resource_group_name = azurerm_resource_group.rg.name
@@ -2422,11 +2705,11 @@ resource "azurerm_monitor_action_group" "a2a_alerts" {
 
 # A2A System Health Alert
 resource "azurerm_monitor_metric_alert" "a2a_system_health" {
-  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
   
   name                = "${local.web_app_name}-a2a-health"
   resource_group_name = azurerm_resource_group.rg.name
-  scopes              = [azurerm_linux_web_app.app.id]
+  scopes              = [azurerm_linux_web_app.app[0].id]
   description         = "Alert when A2A automation system health degrades"
   severity            = 2
   frequency           = "PT1M"
@@ -2449,11 +2732,11 @@ resource "azurerm_monitor_metric_alert" "a2a_system_health" {
 
 # A2A Performance Alert  
 resource "azurerm_monitor_metric_alert" "a2a_performance" {
-  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards) ? 1 : 0
+  count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
   
   name                = "${local.web_app_name}-a2a-performance"
   resource_group_name = azurerm_resource_group.rg.name
-  scopes              = [azurerm_linux_web_app.app.id]
+  scopes              = [azurerm_linux_web_app.app[0].id]
   description         = "Alert when A2A system response time exceeds threshold"
   severity            = 3
   frequency           = "PT1M"
@@ -2476,10 +2759,11 @@ resource "azurerm_monitor_metric_alert" "a2a_performance" {
 
 # Post-deploy automated fix to ensure Web App starts successfully
 resource "null_resource" "post_deploy_health" {
+  count = local.deploy_to_appservice ? 1 : 0
   depends_on = [
     azurerm_linux_web_app.app,
     azurerm_role_assignment.webapp_acr_pull,
-    azurerm_key_vault_access_policy.app_policy,
+    azurerm_role_assignment.kv_secrets_user_webapp,
     null_resource.deploy_a2a_automation
   ]
 

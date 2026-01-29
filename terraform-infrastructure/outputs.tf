@@ -19,13 +19,13 @@ output "container_registry_name" {
 }
 
 output "application_name" {
-  value       = azurerm_linux_web_app.app.name
-  description = "App Service name"
+  value       = var.deployment_target == "appservice" ? azurerm_linux_web_app.app[0].name : azurerm_container_app.app[0].name
+  description = "Application name"
 }
 
 output "application_url" {
-  value       = azurerm_linux_web_app.app.default_hostname
-  description = "Primary host name for the App Service"
+  value       = var.deployment_target == "appservice" ? azurerm_linux_web_app.app[0].default_hostname : azurerm_container_app.app[0].ingress[0].fqdn
+  description = "Primary host name for the application"
 }
 
 output "ai_foundry_name" {
@@ -52,6 +52,102 @@ output "application_insights_connection_string" {
   value       = azurerm_application_insights.appinsights.connection_string
   description = "Application Insights connection string"
   sensitive   = true
+}
+
+locals {
+  appservice_instructions = var.deployment_target == "appservice" ? trimspace(<<-EOT
+
+  ============================================================================
+  ZAVA AI SHOPPING ASSISTANT - DEPLOYMENT COMPLETE
+  ============================================================================
+
+  AZURE WEB APP:
+    - App Name: ${azurerm_linux_web_app.app[0].name}
+    - URL: https://${azurerm_linux_web_app.app[0].default_hostname}
+    - Health Check: https://${azurerm_linux_web_app.app[0].default_hostname}/health
+
+  LOCAL TESTING:
+    - Primary URL: https://${azurerm_linux_web_app.app[0].default_hostname}
+    - For Local Development: http://127.0.0.1:8000
+    - To run locally:
+      cd ../src
+      venv\Scripts\Activate.ps1
+      uvicorn chat_app:app --host 0.0.0.0 --port 8000
+
+  A2A AUTOMATION FRAMEWORK:
+    - Enabled: ${var.enable_a2a_automation}
+    - Azure Web App Integration: https://${azurerm_linux_web_app.app[0].default_hostname}/a2a
+    - Status: https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/status
+    - Metrics: https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/metrics
+    - Health: https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/health
+    - Testing: https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/test/run
+
+  A2A AUTOMATION FEATURES:
+    🤖 Automated Process Management
+    🚀 Continuous Deployment Pipeline
+    🧪 Continuous Testing: ${var.enable_continuous_testing}
+    📊 Monitoring Dashboards: ${var.enable_monitoring_dashboards}
+    🔧 Self-healing Capabilities
+
+  TO START A2A AUTOMATION:
+    cd ../src/a2a
+    .\start_automation.ps1
+
+  TO CHECK A2A STATUS:
+    .\status_automation.ps1
+
+  TEST PROMPTS:
+    - "What colors of paint do you have available?"
+    - "Tell me about lattices"
+    - "Where can I find your store?"
+    - "Do you have history books?" (tests scope limits)
+
+  AZURE RESOURCES:
+    - Resource Group: ${azurerm_resource_group.rg.name}
+    - AI Foundry: ${local.ai_foundry_name}
+    - Cosmos DB: ${local.cosmos_account_name}
+    - Search Service: ${local.search_service_name}
+    - Container Registry: ${local.registry_name}
+
+  ============================================================================
+
+  EOT
+  ) : ""
+
+  containerapps_instructions = var.deployment_target == "containerapps" ? trimspace(<<-EOT
+
+  ============================================================================
+  ZAVA AI SHOPPING ASSISTANT - DEPLOYMENT COMPLETE
+  ============================================================================
+
+  AZURE CONTAINER APPS:
+    - App Name: ${azurerm_container_app.app[0].name}
+    - URL: https://${azurerm_container_app.app[0].ingress[0].fqdn}
+    - Health Check: https://${azurerm_container_app.app[0].ingress[0].fqdn}/health
+
+  LOCAL TESTING:
+    - Primary URL: https://${azurerm_container_app.app[0].ingress[0].fqdn}
+    - For Local Development: http://127.0.0.1:8000
+    - To run locally:
+      cd ../src
+      venv\Scripts\Activate.ps1
+      uvicorn chat_app:app --host 0.0.0.0 --port 8000
+
+  A2A AUTOMATION FRAMEWORK:
+    - Enabled: ${var.enable_a2a_automation}
+    - Base URL: https://${azurerm_container_app.app[0].ingress[0].fqdn}
+
+  AZURE RESOURCES:
+    - Resource Group: ${azurerm_resource_group.rg.name}
+    - AI Foundry: ${local.ai_foundry_name}
+    - Cosmos DB: ${local.cosmos_account_name}
+    - Search Service: ${local.search_service_name}
+    - Container Registry: ${local.registry_name}
+
+  ============================================================================
+
+  EOT
+  ) : ""
 }
 
 output "cosmos_db_name" {
@@ -116,10 +212,10 @@ output "key_vault_uri" {
 
 output "deployed_models" {
   value = var.enable_ai_automation ? [
-    "gpt-4o-mini",
+    "model-router",
     "text-embedding-3-small"
   ] : []
-  description = "List of AI models actually deployed (phi-4 not available in this region)"
+  description = "List of AI models actually deployed"
 }
 
 output "env_file_location" {
@@ -128,73 +224,17 @@ output "env_file_location" {
 }
 
 output "chat_application_url" {
-  value       = "https://${azurerm_linux_web_app.app.default_hostname}"
+  value       = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}"
   description = "URL to access the Zava AI Shopping Assistant chat application"
 }
 
 output "chat_application_health" {
-  value       = "https://${azurerm_linux_web_app.app.default_hostname}/health"
+  value       = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/health"
   description = "Health check endpoint for the chat application"
 }
 
 output "application_instructions" {
-  value = <<-EOT
-
-  ============================================================================
-  ZAVA AI SHOPPING ASSISTANT - DEPLOYMENT COMPLETE
-  ============================================================================
-
-  AZURE WEB APP:
-    - App Name: ${azurerm_linux_web_app.app.name}
-    - URL: https://${azurerm_linux_web_app.app.default_hostname}
-    - Health Check: https://${azurerm_linux_web_app.app.default_hostname}/health
-
-  LOCAL TESTING:
-    - Primary URL: https://${azurerm_linux_web_app.app.default_hostname}
-    - For Local Development: http://127.0.0.1:8000
-    - To run locally:
-      cd ../src
-      venv\Scripts\Activate.ps1
-      uvicorn chat_app:app --host 0.0.0.0 --port 8000
-
-  A2A AUTOMATION FRAMEWORK:
-    - Enabled: ${var.enable_a2a_automation}
-    - Azure Web App Integration: https://${azurerm_linux_web_app.app.default_hostname}/a2a
-    - Status: https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/status
-    - Metrics: https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/metrics
-    - Health: https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/health
-    - Testing: https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/test/run
-
-  A2A AUTOMATION FEATURES:
-    🤖 Automated Process Management
-    🚀 Continuous Deployment Pipeline
-    🧪 Continuous Testing: ${var.enable_continuous_testing}
-    📊 Monitoring Dashboards: ${var.enable_monitoring_dashboards}
-    🔧 Self-healing Capabilities
-
-  TO START A2A AUTOMATION:
-    cd ../src/a2a
-    .\start_automation.ps1
-
-  TO CHECK A2A STATUS:
-    .\status_automation.ps1
-
-  TEST PROMPTS:
-    - "What colors of paint do you have available?"
-    - "Tell me about lattices"
-    - "Where can I find your store?"
-    - "Do you have history books?" (tests scope limits)
-
-  AZURE RESOURCES:
-    - Resource Group: ${azurerm_resource_group.rg.name}
-    - AI Foundry: ${local.ai_foundry_name}
-    - Cosmos DB: ${local.cosmos_account_name}
-    - Search Service: ${local.search_service_name}
-    - Container Registry: ${local.registry_name}
-
-  ============================================================================
-
-  EOT
+  value       = var.deployment_target == "appservice" ? local.appservice_instructions : local.containerapps_instructions
   description = "Deployment summary and usage instructions including A2A automation"
 }
 
@@ -211,14 +251,23 @@ output "a2a_automation_port" {
 
 output "a2a_automation_endpoints" {
   description = "A2A automation endpoints"
-  value = var.enable_a2a_automation ? {
-    status      = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/status"
-    metrics     = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/metrics"
-    health      = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/health"
-    testing     = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/test/run"
-    deployment  = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/deploy/trigger"
-    performance = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/performance"
-  } : {}
+  value = var.enable_a2a_automation ? (
+    var.deployment_target == "appservice" ? {
+      status      = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/status"
+      metrics     = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/metrics"
+      health      = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/health"
+      testing     = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/test/run"
+      deployment  = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/deploy/trigger"
+      performance = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/performance"
+    } : {
+      status      = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/status"
+      metrics     = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/metrics"
+      health      = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/health"
+      testing     = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/test/run"
+      deployment  = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/deploy/trigger"
+      performance = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/performance"
+    }
+  ) : {}
 }
 
 output "monitoring_dashboards_enabled" {
@@ -236,8 +285,8 @@ output "deployment_summary" {
   description = "Summary of all deployed components"
   value = {
     web_application = {
-      url = "https://${azurerm_linux_web_app.app.default_hostname}"
-      health_check = "https://${azurerm_linux_web_app.app.default_hostname}/health"
+      url = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}"
+      health_check = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/health"
     }
     ai_services = {
       foundry_endpoint = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
@@ -250,9 +299,9 @@ output "deployment_summary" {
       monitoring = var.enable_monitoring_dashboards
       testing = var.enable_continuous_testing
       endpoints = var.enable_a2a_automation ? {
-        status = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/status"
-        metrics = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/metrics"
-        health = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/health"
+        status = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/status" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/status"
+        metrics = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/metrics" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/metrics"
+        health = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/health"
       } : null
     }
     data_services = {

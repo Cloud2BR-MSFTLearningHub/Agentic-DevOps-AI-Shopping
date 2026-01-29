@@ -4,6 +4,7 @@ This script uses .services.ai.azure.com endpoint.
 """
 import os
 import json
+from pathlib import Path
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -48,12 +49,20 @@ def verify_agents():
     print(f"Endpoint (full): {full_project_endpoint}")
     print()
     
-    # Read expected agents from state file
-    state_path = os.path.join(os.path.dirname(__file__), "agents_state.json")
-    if not os.path.exists(state_path):
-        print(f"ERROR: agents_state.json not found at: {state_path}")
+    # Read expected agents from state file.
+    # deploy_real_agents.py writes to terraform-infrastructure/.terraform/agents_state.json
+    # but older versions of this script expected a local agents_state.json.
+    candidates = [
+        Path(__file__).resolve().parent / "agents_state.json",
+        Path(__file__).resolve().parents[3] / "terraform-infrastructure" / ".terraform" / "agents_state.json",
+    ]
+    state_path = next((p for p in candidates if p.exists()), None)
+    if not state_path:
+        print("ERROR: No agents state file found. Tried:")
+        for p in candidates:
+            print(f"  - {p}")
         return False
-    
+
     with open(state_path, 'r', encoding='utf-8') as f:
         expected_agents = json.load(f)
     
@@ -73,7 +82,7 @@ def verify_agents():
         )
         
         print("Fetching agents from Azure AI Foundry...")
-        agents_list = list(project_client.agents.list_agents())
+        agents_list = list(project_client.agents.list())
         
         print(f"\nFound {len(agents_list)} agent(s) in Azure AI Foundry:")
         

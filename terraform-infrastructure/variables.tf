@@ -81,3 +81,21 @@ variable "automation_storage_path" {
   default     = "./automation_data"
 }
 
+variable "app_service_sku" {
+  type        = string
+  description = "App Service Plan SKU (e.g., B1, S1, P0v3). Must support Linux custom containers."
+  default     = "S1"
+}
+
+variable "deployment_target" {
+  type        = string
+  description = "Deployment target: 'appservice' or 'containerapps'"
+  default     = "containerapps"
+}
+
+variable "chat_model_deployment" {
+  type        = string
+  description = "Chat model deployment name for agents and chat (e.g., model-router or gpt-4o-mini)"
+  default     = "gpt-4o-mini"
+}
+
