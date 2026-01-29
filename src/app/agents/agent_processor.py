@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 try:
     from azure.ai.projects import AIProjectClient  # type: ignore
     from azure.identity import DefaultAzureCredential  # type: ignore
+    from services.azure_auth import get_default_credential, get_inference_credential  # type: ignore
     _REMOTE_AVAILABLE = True
 except Exception:
     _REMOTE_AVAILABLE = False
@@ -112,11 +113,32 @@ class AgentProcessor:
             project_endpoint: Optional project endpoint (reads from env if not provided)
         """
         self.agent_id = agent_id
-        self.project_endpoint = project_endpoint or os.environ.get("AZURE_AI_AGENT_ENDPOINT")
-        
-        if not self.project_endpoint or not _REMOTE_AVAILABLE:
+
+        raw_endpoint = (
+            project_endpoint
+            or os.environ.get("AZURE_AI_AGENT_ENDPOINT")
+            or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+            or os.environ.get("AZURE_AI_FOUNDRY_ENDPOINT")
+        )
+        if not raw_endpoint or not _REMOTE_AVAILABLE:
             raise ValueError("Remote agent support unavailable (endpoint or SDK missing)")
-        self.client = AIProjectClient(endpoint=self.project_endpoint, credential=DefaultAzureCredential())
+
+        # The Azure AI Projects SDK expects: https://<hub>.services.ai.azure.com/api/projects/<project>
+        project_name = os.environ.get("AZURE_AI_PROJECT_NAME")
+        normalized = raw_endpoint.replace("cognitiveservices.azure.com", "services.ai.azure.com")
+
+        if "/api/projects/" in normalized:
+            # Already a full project endpoint
+            full_project_endpoint = normalized.rstrip("/")
+        elif project_name:
+            base_endpoint = normalized.split("/api/")[0].rstrip("/")
+            full_project_endpoint = f"{base_endpoint}/api/projects/{project_name}"
+        else:
+            # Best-effort fallback (may still work if the caller provided a full endpoint)
+            full_project_endpoint = normalized.rstrip("/")
+
+        self.project_endpoint = full_project_endpoint
+        self.client = AIProjectClient(endpoint=self.project_endpoint, credential=get_default_credential())
     
     def run_conversation_with_text_stream(
         self,

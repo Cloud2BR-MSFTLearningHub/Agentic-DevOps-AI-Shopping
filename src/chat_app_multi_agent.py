@@ -92,14 +92,22 @@ def _flatten_response_json(response_json: Dict[str, Any]) -> str:
     return final or '(No response)'
 
 
+def _get_env_any(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None
+
+
 def get_agent_processor(domain: str):
     """Return a processor (remote if available, else local) for the domain."""
     agent_id_map = {
-        "interior_design": os.getenv("interior_designer"),
-        "inventory": os.getenv("inventory_agent"),
-        "customer_loyalty": os.getenv("customer_loyalty"),
-        "cart_management": os.getenv("cart_manager"),
-        "cora": os.getenv("cora")
+        "interior_design": _get_env_any("interior_designer", "AGENT_INTERIOR_DESIGNER_ID"),
+        "inventory": _get_env_any("inventory_agent", "AGENT_INVENTORY_AGENT_ID"),
+        "customer_loyalty": _get_env_any("customer_loyalty", "AGENT_CUSTOMER_LOYALTY_ID"),
+        "cart_management": _get_env_any("cart_manager", "AGENT_CART_MANAGER_ID"),
+        "cora": _get_env_any("cora", "AGENT_CORA_ID")
     }
 
     agent_id = agent_id_map.get(domain)

@@ -2,7 +2,10 @@ import os
 import time
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
+from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+from services.azure_auth import get_default_credential, get_inference_credential
 
 # Load environment variables (Azure endpoint, deployment, keys, etc.)
 load_dotenv()
@@ -12,7 +15,6 @@ endpoint = (
     os.getenv("gpt_endpoint")
     or os.getenv("AZURE_OPENAI_ENDPOINT")
     or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
-    or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
 )
 api_key = (
     os.getenv("gpt_api_key")
@@ -32,14 +34,14 @@ def get_client():
     """Lazily initialize and return the MSFT Foundry client"""
     global client
     if client is None:
-        # Graceful fallback if endpoint or key missing
-        if not endpoint or not api_key:
+        # Graceful fallback if endpoint is missing
+        if not endpoint:
             # Provide a stub-like response by using dummy client pattern
             # Instead of raising, log and use lightweight shim that returns explanatory text
             class _Shim:
                 def complete(self, *_, **__):
                     class _Resp:
-                        choices = [type("_C", (), {"message": type("_M", (), {"content": "Configuration error: missing endpoint or api key. Please ensure terraform apply populated .env with gpt_endpoint and gpt_api_key."})()})]
+                        choices = [type("_C", (), {"message": type("_M", (), {"content": "Configuration error: missing endpoint. Please ensure terraform apply populated .env with gpt_endpoint."})()})]
                     return _Resp()
             return _Shim()
 
@@ -48,7 +50,15 @@ def get_client():
             foundry_endpoint = foundry_endpoint.replace('.services.azure.com', '.services.ai.azure.com')
         if not foundry_endpoint.endswith('/models'):
             foundry_endpoint = f"{foundry_endpoint.rstrip('/')}/models"
-        client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=AzureKeyCredential(api_key))
+        if api_key:
+            credential = AzureKeyCredential(api_key)
+        else:
+            credential = get_inference_credential(
+                api_key=None,
+                default_credential=get_default_credential(),
+                endpoint=foundry_endpoint,
+            )
+        client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=credential)
     return client
 
 def generate_response(text_input):

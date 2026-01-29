@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-01-12
+Last updated: 2026-01-29
 
 ----------
 
@@ -153,7 +153,7 @@ graph TD
    - Configures delegation relationships between Product Manager and specialized agents.
    - Saves the unique Agent IDs, delegation endpoints, and A2A configuration to the `.env` file.
 
-      > E.g `Old UI`
+      > E.g `Classic UI`
       
       <img width="1881" height="1000" alt="image" src="https://github.com/user-attachments/assets/59a9dcaf-9291-403c-b8b0-1195c1375aac" />
 
@@ -171,7 +171,7 @@ graph TD
    - Visit `https://<your-app-name>.azurewebsites.net`.
    - You should see the Zava chat interface with A2A protocol support.
 
-      > E.g `Old UI`
+      > E.g `Classic UI`
       
        <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
@@ -187,7 +187,7 @@ graph TD
      - Core agents: Cora, Interior Design, Inventory, Loyalty, Cart Manager
      - Product Management Specialist with delegation capabilities
 
-      > E.g `Old UI`
+      > E.g `Classic UI`
       
       <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
@@ -202,7 +202,7 @@ graph TD
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1324-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-01-12</p>
+  <img src="https://img.shields.io/badge/Total%20views-1329-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-29</p>
 </div>
 <!-- END BADGE -->

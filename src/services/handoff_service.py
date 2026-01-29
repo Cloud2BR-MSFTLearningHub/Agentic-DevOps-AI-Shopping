@@ -8,7 +8,10 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
+from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+
+from services.azure_auth import get_default_credential, get_inference_credential
 
 load_dotenv()
 
@@ -34,12 +37,25 @@ class HandoffService:
     
     def __init__(self):
         """Initialize the handoff service with GPT client"""
-        endpoint = os.getenv("gpt_endpoint")
-        api_key = os.getenv("gpt_api_key")
-        deployment = os.getenv("gpt_deployment")
-        
-        if not all([endpoint, api_key, deployment]):
-            raise ValueError("Missing GPT configuration in environment")
+        endpoint = (
+            os.getenv("gpt_endpoint")
+            or os.getenv("AZURE_OPENAI_ENDPOINT")
+            or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
+        )
+        api_key = (
+            os.getenv("gpt_api_key")
+            or os.getenv("AZURE_OPENAI_API_KEY")
+            or os.getenv("AZURE_AI_FOUNDRY_API_KEY")
+        )
+        deployment = (
+            os.getenv("gpt_deployment")
+            or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+            or os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
+        )
+
+        # Endpoint + deployment are required. API key is optional when using Managed Identity/AAD.
+        if not all([endpoint, deployment]):
+            raise ValueError("Missing GPT configuration in environment (endpoint and deployment required)")
         
         # Convert endpoint to Azure AI Foundry format
         foundry_endpoint = endpoint.replace('.cognitiveservices.', '.services.ai.')
@@ -48,10 +64,15 @@ class HandoffService:
         if not foundry_endpoint.endswith('/models'):
             foundry_endpoint = f"{foundry_endpoint.rstrip('/')}/models"
         
-        self.client = ChatCompletionsClient(
-            endpoint=foundry_endpoint,
-            credential=AzureKeyCredential(api_key)
-        )
+        if api_key:
+            credential = AzureKeyCredential(api_key)
+        else:
+            credential = get_inference_credential(
+                api_key=None,
+                default_credential=get_default_credential(),
+                endpoint=foundry_endpoint,
+            )
+        self.client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=credential)
         self.deployment = deployment
     
     def classify_intent(
