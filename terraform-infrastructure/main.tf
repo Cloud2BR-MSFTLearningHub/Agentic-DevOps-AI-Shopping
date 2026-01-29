@@ -151,6 +151,21 @@ resource "azapi_resource" "ai_project" {
   depends_on = [azapi_update_resource.ai_foundry_enable_project_mgmt]
 }
 
+# Grant current principal access to AI Foundry + AI Project for Agents API
+resource "azurerm_role_assignment" "ai_foundry_openai_user" {
+  scope                = azapi_resource.ai_foundry.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = local.principal_id
+  depends_on           = [azapi_resource.ai_foundry]
+}
+
+resource "azurerm_role_assignment" "ai_project_user" {
+  scope                = azapi_resource.ai_project.id
+  role_definition_name = "Azure AI User"
+  principal_id         = local.principal_id
+  depends_on           = [azapi_resource.ai_project]
+}
+
 # === Real Multi-Agent Creation (ochartarotr) ===
 # NOTE: Azure Agents API not yet available via ARM/Terraform (returns 500 Internal Server Error)
 # Keeping these commented for future use when the API becomes available
@@ -1969,7 +1984,9 @@ resource "null_resource" "deploy_multi_agents" {
   depends_on = [
     null_resource.create_env_file,
     null_resource.ai_model_deployments,
-    azapi_resource.ai_project
+    azapi_resource.ai_project,
+    azurerm_role_assignment.ai_foundry_openai_user,
+    azurerm_role_assignment.ai_project_user
   ]
 
   provisioner "local-exec" {
@@ -2006,6 +2023,13 @@ resource "null_resource" "deploy_multi_agents" {
       $agentEndpointBase = $rawEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
       $agentEndpoint = "$agentEndpointBase/api/projects/${local.ai_project_name}"
       $env:AZURE_AI_PROJECT_ENDPOINT = $agentEndpoint
+      $env:AZURE_AI_FOUNDRY_ENDPOINT = $rawEndpoint
+      $env:AZURE_AI_FOUNDRY_NAME = "${local.ai_foundry_name}"
+      $env:AZURE_AI_PROJECT_NAME = "${local.ai_project_name}"
+      $env:AZURE_SUBSCRIPTION_ID = "${data.azurerm_client_config.current.subscription_id}"
+      $env:AZURE_RESOURCE_GROUP = "${azurerm_resource_group.rg.name}"
+      $env:AZURE_LOCATION = "${var.location}"
+      $env:AZURE_AI_PROJECT_CONNECTION_STRING = "${var.location}.api.azureml.ms;subscription_id=${data.azurerm_client_config.current.subscription_id};resource_group=${azurerm_resource_group.rg.name};project_name=${local.ai_project_name}"
       Write-Host "Using Agents API endpoint: $agentEndpoint"
       
       # Deploy agents using Python script

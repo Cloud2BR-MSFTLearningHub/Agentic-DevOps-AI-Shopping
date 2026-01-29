@@ -157,6 +157,10 @@ graph TD
       
       <img width="1881" height="1000" alt="image" src="https://github.com/user-attachments/assets/59a9dcaf-9291-403c-b8b0-1195c1375aac" />
 
+      > E.g `New Platform`:
+
+      <img width="1887" height="606" alt="image" src="https://github.com/user-attachments/assets/02f9e726-6274-490e-8db7-111885a13871" />
+
 5. **Application Deployment**:
    - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
    - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
@@ -202,7 +206,7 @@ graph TD
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1329-limegreen" alt="Total views">
+  <img src="https://img.shields.io/badge/Total%20views-1325-limegreen" alt="Total views">
   <p>Refresh Date: 2026-01-29</p>
 </div>
 <!-- END BADGE -->
