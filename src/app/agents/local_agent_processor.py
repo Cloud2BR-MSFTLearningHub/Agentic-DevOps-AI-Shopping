@@ -1,5 +1,8 @@
 import json
 import os
+import logging
+import traceback
+import uuid
 from typing import List, Dict, Any, Generator
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
@@ -34,6 +37,12 @@ class LocalAgentProcessor:
     def __init__(self, agent_id: str, domain: str):
         self.agent_id = agent_id
         self.domain = domain
+        self.logger = logging.getLogger("local_agent_processor")
+        self._debug = os.getenv("A2A_DEBUG", "").lower() in {"1", "true", "yes"}
+        self._last_error_id: str | None = None
+        self._last_error_detail: str | None = None
+        if self._debug:
+            self.logger.setLevel(logging.DEBUG)
         
         # Initialize GPT client (shared across all agents)
         endpoint = (
@@ -58,6 +67,13 @@ class LocalAgentProcessor:
         self.use_gpt = False
         self.client = None
         self.model = deployment
+        self._inference_endpoint: str | None = None
+        self._using_key_auth: bool = False
+
+        # Default to managed identity / Entra ID auth in Azure.
+        # Only use key-based auth when explicitly enabled.
+        self._prefer_aad: bool = os.getenv("A2A_PREFER_AAD", "true").lower() in {"1", "true", "yes"}
+        self._allow_key_auth: bool = os.getenv("A2A_USE_KEY_AUTH", "").lower() in {"1", "true", "yes"}
 
         if endpoint and deployment:
             # Convert endpoint to Foundry format if needed
@@ -67,20 +83,66 @@ class LocalAgentProcessor:
             if not foundry_endpoint.endswith('/models'):
                 foundry_endpoint = f"{foundry_endpoint.rstrip('/')}/models"
 
+            self._inference_endpoint = foundry_endpoint
+
             try:
-                # Prefer key auth if present; otherwise use token-based auth (Managed Identity in cloud).
-                if api_key:
+                # Prefer token-based auth (Managed Identity in cloud).
+                # Keys are often disabled (disableLocalAuth) and should be opt-in.
+                if api_key and self._allow_key_auth and not self._prefer_aad:
                     credential = AzureKeyCredential(api_key)
+                    self._using_key_auth = True
                 else:
                     credential = get_inference_credential(
                         api_key=None,
                         default_credential=get_default_credential(),
                         endpoint=foundry_endpoint,
                     )
+                    self._using_key_auth = False
                 self.client = ChatCompletionsClient(endpoint=foundry_endpoint, credential=credential)
                 self.use_gpt = True
             except Exception:
+                self.logger.exception("Failed to initialize ChatCompletionsClient (endpoint=%s, deployment=%s)", foundry_endpoint, deployment)
                 self.use_gpt = False
+
+    def _format_exception_detail(self, error_id: str, exc: Exception) -> str:
+        """Format a detailed, UI-safe error message for troubleshooting."""
+        parts: list[str] = []
+        parts.append(f"error_id={error_id}")
+        parts.append(f"agent_domain={self.domain}")
+        parts.append(f"model={self.model}")
+        parts.append(f"endpoint={self._inference_endpoint}")
+        parts.append(f"auth_mode={'key' if self._using_key_auth else 'aad'}")
+
+        # Helpful identity context when running on Azure
+        azure_client_id = os.getenv("AZURE_CLIENT_ID")
+        if azure_client_id:
+            parts.append(f"AZURE_CLIENT_ID={azure_client_id}")
+
+        parts.append(f"exception_type={type(exc).__name__}")
+        parts.append(f"exception={str(exc)}")
+
+        # Try to extract HTTP response details if present
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status_code = getattr(response, "status_code", None)
+            if status_code is not None:
+                parts.append(f"http_status={status_code}")
+
+            headers = getattr(response, "headers", None) or {}
+            for header_name in ("x-ms-request-id", "x-ms-client-request-id", "x-ms-correlation-request-id"):
+                header_value = headers.get(header_name)
+                if header_value:
+                    parts.append(f"{header_name}={header_value}")
+
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None and "http_status=" not in "\n".join(parts):
+            parts.append(f"http_status={status_code}")
+
+        # Include traceback only in debug mode
+        if self._debug:
+            parts.append("traceback=\n" + traceback.format_exc())
+
+        return "\n".join(parts)
 
     def _call_gpt(self, user_message: str, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> str:
         """Call GPT with domain-specific system prompt."""
@@ -115,10 +177,55 @@ class LocalAgentProcessor:
                 temperature=0.7,
                 max_tokens=500
             )
-            
+            self._last_error_id = None
+            self._last_error_detail = None
             return response.choices[0].message.content
         except Exception as e:
-            return f"I'm having trouble connecting right now. Error: {str(e)[:100]}"
+            # If we attempted key auth and the resource has local auth disabled,
+            # transparently retry once with Entra ID (managed identity) auth.
+            if self._using_key_auth and self._inference_endpoint:
+                try:
+                    error_code = getattr(e, "error", None)
+                    if hasattr(e, "response") and getattr(getattr(e, "response", None), "status_code", None) == 403:
+                        # Heuristic: the common case we see is AuthenticationTypeDisabled.
+                        msg = str(e) or ""
+                        if "AuthenticationTypeDisabled" in msg or "Key based authentication is disabled" in msg:
+                            self.logger.warning(
+                                "Key auth disabled for inference endpoint; retrying with AAD (domain=%s, endpoint=%s)",
+                                self.domain,
+                                self._inference_endpoint,
+                            )
+                            aad_cred = get_inference_credential(
+                                api_key=None,
+                                default_credential=get_default_credential(),
+                                endpoint=self._inference_endpoint,
+                            )
+                            self.client = ChatCompletionsClient(endpoint=self._inference_endpoint, credential=aad_cred)
+                            self._using_key_auth = False
+                            retry = self.client.complete(
+                                messages=messages,
+                                model=self.model,
+                                temperature=0.7,
+                                max_tokens=500,
+                            )
+                            self._last_error_id = None
+                            self._last_error_detail = None
+                            return retry.choices[0].message.content
+                except Exception:
+                    # Fall through to normal error handling
+                    pass
+
+            error_id = uuid.uuid4().hex
+            self._last_error_id = error_id
+            self._last_error_detail = self._format_exception_detail(error_id, e)
+            self.logger.exception(
+                "GPT call failed (error_id=%s, domain=%s, endpoint=%s, model=%s)",
+                error_id,
+                self.domain,
+                self._inference_endpoint,
+                self.model,
+            )
+            return f"I'm having trouble connecting right now. (error_id={error_id})"
     
     def _interior_design(self, user_message: str, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         # Check if this is an image generation request
@@ -154,12 +261,20 @@ class LocalAgentProcessor:
 
     def _inventory(self, user_message: str, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         answer = self._call_gpt(user_message, conversation_history, additional_context)
-        return {"answer": answer}
+        result: Dict[str, Any] = {"answer": answer}
+        if self._last_error_detail:
+            result["error"] = self._last_error_detail
+            result["error_id"] = self._last_error_id
+        return result
 
     def _customer_loyalty(self, customer_id: str | None, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         user_message = f"Check loyalty benefits for customer {customer_id or 'current customer'}"
         answer = self._call_gpt(user_message, conversation_history, additional_context)
-        return {"answer": answer, "discount_percentage": "10"}
+        result: Dict[str, Any] = {"answer": answer, "discount_percentage": "10"}
+        if self._last_error_detail:
+            result["error"] = self._last_error_detail
+            result["error_id"] = self._last_error_id
+        return result
 
     def _cart_management(self, user_message: str, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         cart = additional_context.get("cart", []) if additional_context else []
@@ -176,11 +291,19 @@ class LocalAgentProcessor:
         
         # Get GPT response about the cart action
         answer = self._call_gpt(user_message, conversation_history, {"cart": cart})
-        return {"answer": answer, "cart": cart}
+        result: Dict[str, Any] = {"answer": answer, "cart": cart}
+        if self._last_error_detail:
+            result["error"] = self._last_error_detail
+            result["error_id"] = self._last_error_id
+        return result
 
     def _cora(self, user_message: str, conversation_history: List[Dict[str, str]] | None = None, additional_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         answer = self._call_gpt(user_message, conversation_history, additional_context)
-        return {"answer": answer}
+        result: Dict[str, Any] = {"answer": answer}
+        if self._last_error_detail:
+            result["error"] = self._last_error_detail
+            result["error_id"] = self._last_error_id
+        return result
 
     def run_conversation_with_text_stream(
         self,

@@ -1,6 +1,8 @@
 import os
 import logging
 import json
+import uuid
+import traceback
 from typing import Any, Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
@@ -27,6 +29,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _debug_enabled() -> bool:
+    return os.getenv("A2A_DEBUG", "").lower() in {"1", "true", "yes"}
+
+
+def _format_exception_for_client(error_id: str, exc: Exception) -> str:
+    parts: list[str] = [f"error_id={error_id}", f"exception_type={type(exc).__name__}", f"exception={str(exc)}"]
+    if _debug_enabled():
+        parts.append("traceback=\n" + traceback.format_exc())
+    return "\n".join(parts)
 
 # Initialize FastAPI app
 app = FastAPI(title="Zava AI Shopping Assistant")
@@ -67,7 +80,57 @@ def _extract_plain_answer(raw: str) -> str:
                 return inner.strip()
         except Exception:
             pass
+
+    # Support legacy non-JSON "answer: ...\nimage_output: ...\nproducts: ..." blocks.
+    legacy = _parse_legacy_kv_block(text)
+    if legacy and isinstance(legacy.get("answer"), str):
+        return legacy["answer"].strip()
     return text
+
+
+def _parse_legacy_kv_block(text: str) -> Dict[str, Any] | None:
+    """Parse legacy key-value blocks emitted by older prompts.
+
+    Example input:
+      answer: hello there
+      image_output: []
+      products: []
+
+    Returns a dict with keys when recognized, else None.
+    """
+    if not text:
+        return None
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None
+
+    # Quick reject: must contain at least an answer line.
+    has_answer = any(ln.lower().startswith("answer:") for ln in lines)
+    if not has_answer:
+        return None
+
+    parsed: Dict[str, Any] = {}
+    for line in lines:
+        # Only parse simple "key: value" lines.
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip().rstrip(",")
+
+        if key in {"answer", "image_output", "products"}:
+            if key == "answer":
+                parsed["answer"] = value
+                continue
+
+            # Try to JSON-decode arrays/objects, otherwise keep as string.
+            try:
+                parsed[key] = json.loads(value)
+            except Exception:
+                parsed[key] = value
+
+    return parsed or None
 
 def _flatten_response_json(response_json: Dict[str, Any]) -> str:
     """Derive a single natural language answer from structured fields."""
@@ -242,6 +305,27 @@ async def websocket_endpoint(websocket: WebSocket):
                                 parsed_json = None
 
                     if parsed_json:
+                        # Some prompts return a JSON object as a *string* inside the
+                        # outer {"answer": "..."} wrapper (local agents). Lift it.
+                        if isinstance(parsed_json.get("answer"), str):
+                            inner_text = parsed_json["answer"].strip()
+                            if inner_text.startswith("{") and '"answer"' in inner_text:
+                                try:
+                                    inner_obj = json.loads(inner_text)
+                                    if isinstance(inner_obj, dict):
+                                        # Prefer inner values for these well-known fields.
+                                        for key in ("answer", "products", "image_output", "cart", "discount_percentage", "image_url"):
+                                            if key in inner_obj and inner_obj[key] is not None:
+                                                parsed_json[key] = inner_obj[key]
+                                except Exception:
+                                    pass
+
+                            # Some older prompts embed structured fields inside the
+                            # answer string (e.g., "answer: ...\nproducts: []"). Normalize.
+                            legacy = _parse_legacy_kv_block(parsed_json["answer"]) 
+                            if legacy:
+                                parsed_json.update({k: v for k, v in legacy.items() if v is not None})
+
                         if "cart" in parsed_json and isinstance(parsed_json["cart"], list):
                             persistent_cart = parsed_json["cart"]
                         if "discount_percentage" in parsed_json and parsed_json["discount_percentage"]:
@@ -262,6 +346,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         "cart": persistent_cart,
                         "discount": customer_discount
                     }
+
+                    # Forward structured fields if present.
+                    if parsed_json:
+                        if "products" in parsed_json:
+                            response_data["products"] = parsed_json.get("products")
+                        if "image_output" in parsed_json:
+                            response_data["image_output"] = parsed_json.get("image_output")
+
+                    # If the agent returned diagnostic error details, forward them to the UI.
+                    if parsed_json:
+                        if isinstance(parsed_json.get("error"), str):
+                            response_data["error"] = parsed_json["error"]
+                        if parsed_json.get("error_id") is not None:
+                            response_data["error_id"] = parsed_json.get("error_id")
                     
                     # Include image URL if available
                     if image_url:
@@ -285,10 +383,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.info("Response sent successfully from single agent")
                     
             except Exception as e:
-                logger.error("Error during response generation", exc_info=True)
+                error_id = uuid.uuid4().hex
+                logger.error("Error during response generation (error_id=%s)", error_id, exc_info=True)
                 await websocket.send_text(fast_json_dumps({
-                    "answer": "I'm sorry, I encountered an error processing your request. Please try again.",
-                    "error": str(e),
+                    "answer": f"I'm sorry, I encountered an error processing your request. Please try again. (error_id={error_id})",
+                    "error": _format_exception_for_client(error_id, e),
                     "cart": persistent_cart
                 }))
                 

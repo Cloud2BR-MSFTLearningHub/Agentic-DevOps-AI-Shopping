@@ -13,6 +13,9 @@ resource "random_id" "suffix" {
   byte_length = 4
 }
 
+# Stable GUID for custom role definitions
+resource "random_uuid" "maas_inference_role_id" {}
+
 locals {
   # Use provided user_principal_id or default to current Azure CLI user
   principal_id                = var.user_principal_id != null ? var.user_principal_id : data.azurerm_client_config.current.object_id
@@ -44,6 +47,30 @@ locals {
 
   deploy_to_appservice     = var.deployment_target == "appservice"
   deploy_to_container_apps = var.deployment_target == "containerapps"
+}
+
+# Custom role to allow Azure AI Foundry MaaS inference endpoints via AAD.
+# Some built-in roles don't include the MaaS dataActions required by the
+# /models/chat/completions endpoint.
+resource "azurerm_role_definition" "maas_inference_user" {
+  name               = "${var.name_prefix}-${local.suffix}-maas-inference-user"
+  role_definition_id = random_uuid.maas_inference_role_id.result
+  scope              = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
+  description = "Allows calling Azure AI Foundry MaaS chat/embeddings inference endpoints."
+
+  permissions {
+    actions = []
+    data_actions = [
+      "Microsoft.CognitiveServices/accounts/MaaS/chat/completions/action",
+      "Microsoft.CognitiveServices/accounts/MaaS/embeddings/action",
+    ]
+    not_actions      = []
+    not_data_actions = []
+  }
+
+  assignable_scopes = [
+    "/subscriptions/${data.azurerm_client_config.current.subscription_id}",
+  ]
 }
 
 resource "azurerm_cosmosdb_account" "cosmos" {
@@ -108,7 +135,8 @@ resource "azapi_resource" "storage" {
 }
 
 # AI Foundry account (preview) using AzAPI provider.
-# Using managed identity authentication (disableLocalAuth = true for better security)
+# Managed identity is used by the app, but local auth must remain enabled for some
+# automation steps (e.g., index/vectorizer configuration that requires an API key).
 resource "azapi_resource" "ai_foundry" {
   type                      = "Microsoft.CognitiveServices/accounts@2024-10-01"
   name                      = local.ai_foundry_name
@@ -122,7 +150,8 @@ resource "azapi_resource" "ai_foundry" {
     properties = {
       allowProjectManagement = true
       customSubDomainName    = local.ai_foundry_name
-      disableLocalAuth       = true
+      disableLocalAuth       = false
+      publicNetworkAccess    = "Enabled"
     }
   })
 }
@@ -349,6 +378,15 @@ resource "azurerm_container_app" "app" {
       }
 
       env {
+        name  = "A2A_DEBUG"
+        value = "true"
+      }
+      env {
+        name  = "APP_BUILD_ID"
+        value = local.app_source_hash
+      }
+
+      env {
         name  = "USE_MULTI_AGENT"
         value = var.enable_multi_agent ? "true" : "false"
       }
@@ -362,12 +400,12 @@ resource "azurerm_container_app" "app" {
         value = local.ai_project_name
       }
       env {
-        name  = "AZURE_AI_PROJECT_ENDPOINT"
-        value = "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
+        name        = "AZURE_AI_PROJECT_ENDPOINT"
+        secret_name = "agent-endpoint"
       }
       env {
-        name  = "AZURE_AI_AGENT_ENDPOINT"
-        value = "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
+        name        = "AZURE_AI_AGENT_ENDPOINT"
+        secret_name = "agent-endpoint"
       }
       env {
         name  = "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME"
@@ -464,6 +502,14 @@ resource "azurerm_container_app" "app" {
         secret_name = "search-service-key"
       }
       env {
+        name        = "AZURE_OPENAI_API_KEY"
+        secret_name = "ai-foundry-key"
+      }
+      env {
+        name        = "gpt_api_key"
+        secret_name = "ai-foundry-key"
+      }
+      env {
         name        = "STORAGE_CONNECTION_STRING"
         secret_name = "storage-connection-string"
       }
@@ -480,7 +526,7 @@ resource "azurerm_container_app" "app" {
         for_each = var.enable_cosmos_local_auth ? [] : [1]
         content {
           name  = "COSMOS_DB_KEY"
-          value = "AAD_AUTH"
+          value = ""
         }
       }
 
@@ -526,6 +572,9 @@ resource "azurerm_container_app" "app" {
         value = data.external.agents_state.result["agent_cart_manager_id"]
       }
     }
+
+    min_replicas = 1
+    max_replicas = 2
   }
 
   ingress {
@@ -553,6 +602,16 @@ resource "azurerm_container_app" "app" {
     key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string"
     identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
   }
+  secret {
+    name                = "agent-endpoint"
+    key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint"
+    identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
+  }
+  secret {
+    name                = "ai-foundry-key"
+    key_vault_secret_id = "${azurerm_key_vault.kv.vault_uri}secrets/ai-foundry-key"
+    identity            = azurerm_user_assigned_identity.containerapp_identity[0].id
+  }
   dynamic "secret" {
     for_each = var.enable_cosmos_local_auth ? [1] : []
     content {
@@ -567,6 +626,10 @@ resource "azurerm_container_app" "app" {
     azurerm_user_assigned_identity.containerapp_identity,
     azurerm_role_assignment.kv_secrets_user_containerapp,
     azurerm_role_assignment.containerapp_acr_pull,
+    azapi_resource.containerapp_cosmos_data_contributor,
+    azurerm_role_assignment.containerapp_foundry_openai_user,
+    azurerm_role_assignment.containerapp_project_openai_user,
+    azurerm_role_assignment.containerapp_project_ai_user,
     null_resource.docker_image_build,
     null_resource.set_kv_secrets,
     null_resource.set_agent_kv_secrets
@@ -729,6 +792,7 @@ resource "azurerm_linux_web_app" "app" {
   site_config {
     always_on         = true
     http2_enabled     = true
+    websockets_enabled = true
     minimum_tls_version = "1.2"
     # Ensure App Service waits for container readiness
     health_check_path                 = "/health"
@@ -746,6 +810,8 @@ resource "azurerm_linux_web_app" "app" {
     WEBSITES_ENABLE_APP_SERVICE_STORAGE = "false"
     DOCKER_ENABLE_CI                    = "true"
     WEBSITES_PORT                       = "8000"
+    A2A_DEBUG                            = "true"
+    APP_BUILD_ID                         = local.app_source_hash
 
     # GPT Configuration (using managed identity)
     gpt_endpoint                        = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
@@ -766,7 +832,7 @@ resource "azurerm_linux_web_app" "app" {
 
     # External Service Keys via Key Vault
     SEARCH_SERVICE_KEY                  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/search-admin-key)"
-    COSMOS_DB_KEY                       = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : "AAD_AUTH"
+    COSMOS_DB_KEY                       = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : ""
     STORAGE_CONNECTION_STRING           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
     # Multi-Agent Configuration - Agent IDs from Key Vault
@@ -905,12 +971,43 @@ resource "null_resource" "set_kv_secrets" {
     command     = <<-EOT
       $kv = "${azurerm_key_vault.kv.name}"
       Write-Host "Setting Key Vault secrets (search/storage/cosmos/agent-endpoint)..."
+
+      # Foundry endpoint (authoritative) -> also derive Agents API endpoint
+      $rawAiFoundryEndpoint = az cognitiveservices account show `
+        --resource-group "${azurerm_resource_group.rg.name}" `
+        --name "${local.ai_foundry_name}" `
+        --query "properties.endpoint" `
+        --output tsv
+      $agentEndpointBase = $rawAiFoundryEndpoint -replace "cognitiveservices\.azure\.com", "services.ai.azure.com"
+      $agentEndpointBase = $agentEndpointBase.TrimEnd("/")
+      $agentsProjectEndpoint = "$agentEndpointBase/api/projects/${local.ai_project_name}"
+
       az keyvault secret set --vault-name $kv --name "search-admin-key" --value "${jsondecode(data.azapi_resource_action.search_admin_keys[0].output).primaryKey}" | Out-Null
       az keyvault secret set --vault-name $kv --name "storage-connection-string" --value "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net" | Out-Null
+      # Required for local automation/pipelines (some SDKs require an API key)
+      # The Foundry account can take a while to become terminal; retry key fetch.
+      $aiFoundryKey = $null
+      for ($i = 0; $i -lt 90; $i++) {
+        try {
+          $aiFoundryKey = az cognitiveservices account keys list `
+            --resource-group "${azurerm_resource_group.rg.name}" `
+            --name "${local.ai_foundry_name}" `
+            --query "key1" `
+            --output tsv
+          if ($aiFoundryKey) { break }
+        } catch {
+          # ignore and retry
+        }
+        Start-Sleep -Seconds 10
+      }
+      if (-not $aiFoundryKey) {
+        throw "Timed out waiting for AI Foundry keys. Try re-running terraform apply after the account finishes provisioning."
+      }
+      az keyvault secret set --vault-name $kv --name "ai-foundry-key" --value $aiFoundryKey | Out-Null
       if (${var.enable_cosmos_local_auth ? "$true" : "$false"}) {
         az keyvault secret set --vault-name $kv --name "cosmos-primary-key" --value "${jsondecode(data.azapi_resource_action.cosmos_keys[0].output).primaryMasterKey}" | Out-Null
       }
-      az keyvault secret set --vault-name $kv --name "agent-endpoint" --value "https://${local.ai_foundry_name}.services.ai.azure.com/api/projects/${local.ai_project_name}" | Out-Null
+      az keyvault secret set --vault-name $kv --name "agent-endpoint" --value $agentsProjectEndpoint | Out-Null
     EOT
     interpreter = ["PowerShell", "-Command"]
     working_dir = path.module
@@ -1189,13 +1286,13 @@ locals {
 # Assign Cosmos DB Built-in Data Contributor role to specified user principal
 resource "azapi_resource" "cosmos_user_data_contributor" {
   type      = "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15"
-  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${local.principal_id}-${local.cosmos_db_data_contributor_role_id}")
+  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${local.principal_id}-${local.cosmos_db_data_contributor_role_id}-${azurerm_cosmosdb_sql_database.cosmosdb.name}")
   parent_id = azurerm_cosmosdb_account.cosmos.id
   body = jsonencode({
     properties = {
       roleDefinitionId = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/${local.cosmos_db_data_contributor_role_id}"
       principalId      = local.principal_id
-      scope            = azurerm_cosmosdb_account.cosmos.id
+      scope            = "${azurerm_cosmosdb_account.cosmos.id}/dbs/${azurerm_cosmosdb_sql_database.cosmosdb.name}"
     }
   })
 }
@@ -1204,16 +1301,19 @@ resource "azapi_resource" "cosmos_user_data_contributor" {
 resource "azapi_resource" "containerapp_cosmos_data_contributor" {
   count     = local.deploy_to_container_apps ? 1 : 0
   type      = "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15"
-  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_user_assigned_identity.containerapp_identity[0].principal_id}-${local.cosmos_db_data_contributor_role_id}")
+  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_user_assigned_identity.containerapp_identity[0].principal_id}-${local.cosmos_db_data_contributor_role_id}-${azurerm_cosmosdb_sql_database.cosmosdb.name}")
   parent_id = azurerm_cosmosdb_account.cosmos.id
   body = jsonencode({
     properties = {
       roleDefinitionId = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/${local.cosmos_db_data_contributor_role_id}"
       principalId      = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
-      scope            = azurerm_cosmosdb_account.cosmos.id
+      scope            = "${azurerm_cosmosdb_account.cosmos.id}/dbs/${azurerm_cosmosdb_sql_database.cosmosdb.name}"
     }
   })
-  depends_on = [azurerm_container_app.app]
+  depends_on = [
+    azurerm_user_assigned_identity.containerapp_identity,
+    azurerm_cosmosdb_sql_database.cosmosdb
+  ]
 }
 
 # Role assignments for Search managed identity
@@ -1226,26 +1326,26 @@ resource "azurerm_role_assignment" "search_cosmos_account_reader" {
 
 resource "azapi_resource" "search_cosmos_data_reader" {
   type      = "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15"
-  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_search_service.search.identity[0].principal_id}-${local.cosmos_db_data_reader_role_id}")
+  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_search_service.search.identity[0].principal_id}-${local.cosmos_db_data_reader_role_id}-${azurerm_cosmosdb_sql_database.cosmosdb.name}")
   parent_id = azurerm_cosmosdb_account.cosmos.id
   body = jsonencode({
     properties = {
       roleDefinitionId = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/${local.cosmos_db_data_reader_role_id}"
       principalId      = azurerm_search_service.search.identity[0].principal_id
-      scope            = azurerm_cosmosdb_account.cosmos.id
+      scope            = "${azurerm_cosmosdb_account.cosmos.id}/dbs/${azurerm_cosmosdb_sql_database.cosmosdb.name}"
     }
   })
 }
 
 resource "azapi_resource" "search_cosmos_data_contributor" {
   type      = "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15"
-  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_search_service.search.identity[0].principal_id}-${local.cosmos_db_data_contributor_role_id}")
+  name      = md5("${azurerm_cosmosdb_account.cosmos.id}-${azurerm_search_service.search.identity[0].principal_id}-${local.cosmos_db_data_contributor_role_id}-${azurerm_cosmosdb_sql_database.cosmosdb.name}")
   parent_id = azurerm_cosmosdb_account.cosmos.id
   body = jsonencode({
     properties = {
       roleDefinitionId = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/${local.cosmos_db_data_contributor_role_id}"
       principalId      = azurerm_search_service.search.identity[0].principal_id
-      scope            = azurerm_cosmosdb_account.cosmos.id
+      scope            = "${azurerm_cosmosdb_account.cosmos.id}/dbs/${azurerm_cosmosdb_sql_database.cosmosdb.name}"
     }
   })
 }
@@ -1282,6 +1382,15 @@ resource "azurerm_role_assignment" "webapp_foundry_openai_user" {
   depends_on         = [azurerm_linux_web_app.app]
 }
 
+resource "azurerm_role_assignment" "webapp_foundry_maas_inference_user" {
+  count              = local.deploy_to_appservice ? 1 : 0
+  scope              = azapi_resource.ai_foundry.id
+  role_definition_id = azurerm_role_definition.maas_inference_user.role_definition_resource_id
+  principal_id       = data.azurerm_linux_web_app.app_identity[0].identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_linux_web_app.app, azapi_resource.ai_foundry, azurerm_role_definition.maas_inference_user]
+}
+
 resource "azurerm_role_assignment" "webapp_project_openai_user" {
   count              = local.deploy_to_appservice ? 1 : 0
   scope              = azapi_resource.ai_project.id
@@ -1298,7 +1407,16 @@ resource "azurerm_role_assignment" "containerapp_foundry_openai_user" {
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
   principal_id       = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
   principal_type     = "ServicePrincipal"
-  depends_on         = [azurerm_container_app.app]
+  depends_on         = [azurerm_user_assigned_identity.containerapp_identity, azapi_resource.ai_foundry]
+}
+
+resource "azurerm_role_assignment" "containerapp_foundry_maas_inference_user" {
+  count              = local.deploy_to_container_apps ? 1 : 0
+  scope              = azapi_resource.ai_foundry.id
+  role_definition_id = azurerm_role_definition.maas_inference_user.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+  depends_on         = [azurerm_user_assigned_identity.containerapp_identity, azapi_resource.ai_foundry, azurerm_role_definition.maas_inference_user]
 }
 
 resource "azurerm_role_assignment" "containerapp_project_openai_user" {
@@ -1307,7 +1425,16 @@ resource "azurerm_role_assignment" "containerapp_project_openai_user" {
   role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${local.cognitive_openai_user_role_id}"
   principal_id       = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
   principal_type     = "ServicePrincipal"
-  depends_on         = [azurerm_container_app.app]
+  depends_on         = [azurerm_user_assigned_identity.containerapp_identity, azapi_resource.ai_project]
+}
+
+resource "azurerm_role_assignment" "containerapp_project_ai_user" {
+  count                = local.deploy_to_container_apps ? 1 : 0
+  scope                = azapi_resource.ai_project.id
+  role_definition_name = "Azure AI User"
+  principal_id         = azurerm_user_assigned_identity.containerapp_identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+  depends_on           = [azurerm_user_assigned_identity.containerapp_identity, azapi_resource.ai_project]
 }
 
 # Grant AcrPull role to Container App managed identity for ACR pulls
@@ -1463,7 +1590,7 @@ data "azapi_resource_action" "cosmos_keys" {
   depends_on             = [azurerm_cosmosdb_account.cosmos]
 }
 
-# AI Foundry now uses managed identity authentication - no keys needed
+# AI Foundry uses managed identity for the app, but automation may still require keys
 
 # Connect resources to MSFT Foundry project using ARM templates
 resource "azapi_resource" "storage_connection" {
@@ -1679,7 +1806,7 @@ resource "null_resource" "create_env_file" {
       $searchKey = az keyvault secret show --vault-name $kv --name search-admin-key --query value -o tsv
       if (${var.enable_cosmos_local_auth ? "$true" : "$false"}) {
         $cosmosKey = az keyvault secret show --vault-name $kv --name cosmos-primary-key --query value -o tsv
-      } else { $cosmosKey = "AAD_AUTH" }
+      } else { $cosmosKey = "" }
       $storageConnectionString = az keyvault secret show --vault-name $kv --name storage-connection-string --query value -o tsv
       
       # Create .env file content
@@ -1691,7 +1818,7 @@ AZURE_AI_PROJECT_NAME=${local.ai_project_name}
 AZURE_AI_AGENT_ENDPOINT=$agentsProjectEndpoint
 
 # Azure OpenAI Model Deployments
-  AZURE_OPENAI_CHAT_DEPLOYMENT=${var.chat_model_deployment}
+AZURE_OPENAI_CHAT_DEPLOYMENT=${var.chat_model_deployment}
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_OPENAI_ENDPOINT=$openAiEndpoint
 AZURE_OPENAI_API_KEY=$aiFoundryKey
@@ -1699,7 +1826,7 @@ AZURE_OPENAI_API_VERSION=2024-02-01
 
 # GPT Model Configuration (for single-agent chat)
 gpt_endpoint=$openAiEndpoint
-  gpt_deployment=${var.chat_model_deployment}
+gpt_deployment=${var.chat_model_deployment}
 gpt_api_key=$aiFoundryKey
 gpt_api_version=2024-02-01
 
@@ -1729,7 +1856,7 @@ AZURE_RESOURCE_GROUP=${azurerm_resource_group.rg.name}
 AZURE_LOCATION=${var.location}
 
 # Multi-Agent Configuration
-USE_MULTI_AGENT=true
+USE_MULTI_AGENT=${var.enable_multi_agent ? "true" : "false"}
 AZURE_AI_PROJECT_ENDPOINT=$agentsProjectEndpoint
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=${var.chat_model_deployment}
 
@@ -2471,6 +2598,7 @@ aiosignal>=1.3.0
 A2A_HOST=${var.a2a_host}
 A2A_PORT=${var.a2a_port}
 A2A_LOG_LEVEL=INFO
+A2A_DEBUG=true
 
 # Base application URL for monitoring
 BASE_APP_URL=https://${local.web_app_name}.azurewebsites.net

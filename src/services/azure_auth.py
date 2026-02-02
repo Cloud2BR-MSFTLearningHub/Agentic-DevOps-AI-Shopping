@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+import logging
 from typing import Sequence
 
 from azure.core.credentials import AccessToken, TokenCredential
@@ -10,6 +11,8 @@ from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 AI_FOUNDRY_SCOPE = "https://ai.azure.com/.default"
+
+logger = logging.getLogger("azure_auth")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ def get_inference_credential(
     scope = COGNITIVE_SERVICES_SCOPE
     if endpoint and "services.ai.azure.com" in endpoint:
       scope = AI_FOUNDRY_SCOPE
+    logger.debug("Using token scope %s for endpoint %s", scope, endpoint)
     return FixedScopeTokenCredential(default_credential, scope=scope)
 
 
