@@ -202,15 +202,15 @@ graph TD
       
       <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
-4. **Test Enhanced A2A Interactions**: `Adjust as needed, this is just a base`. For example:
-   - **General**: "Hi, who are you?" (Handled by Cora via A2A protocol)
-   - **Inventory**: "Do you have the classic leather sofa in stock?" (Routed through A2A to Inventory Agent)
-   - **Design**: "What colors of green paint do you have?" (A2A task delegation to Design Agent)
-   - **Product Recommendations**: "Recommend modern furniture for my living room" (Product Manager delegates to Marketing Agent)
-   - **Product Comparisons**: "Compare sectional sofas" (Product Manager delegates to Ranker Agent)
-   - **Product Details**: "What are the specifications of product SOFA-001?" (Product Manager uses Product Information Plugin)
-   - **Multi-Agent**: "Find a sofa, check reviews, and verify my loyalty points" (Complex A2A coordination across multiple specialized agents)
-
+4. **Test Multi-Agent Routing (UI)**: `Adjust as needed, this is just a base`. For example:
+    - **General**: “Hi, who are you?” (Routed to **Cora**)
+    - **Inventory**: “Do you have the classic leather sofa in stock?” (Routed to **Inventory Manager**)
+    - **Design**: “What colors of green paint do you have?” (Routed to **Interior Design Specialist**)
+    - **Product Recommendations**: “Recommend modern furniture for my living room” (Routed to **Product Management Specialist**; may consult catalog/search depending on its prompt/tools)
+    - **Product Comparisons**: “Compare sectional sofas” (Routed to **Product Management Specialist**; comparison is handled within that agent)
+    - **Product Details**: “What are the specifications of product SOFA-001?” (Routed to **Product Management Specialist**; details are handled within that agent)
+    - **Multi-Agent**: “Find a sofa, then verify my loyalty points, and add it to my cart” (Coordinated across **Product Management → Customer Loyalty → Cart Manager** via the app’s multi-step routing)
+      
 <!-- START BADGE -->
 <div align="center">
   <img src="https://img.shields.io/badge/Total%20views-1416-limegreen" alt="Total views">
