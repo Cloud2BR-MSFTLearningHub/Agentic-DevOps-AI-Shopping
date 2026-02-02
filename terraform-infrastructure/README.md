@@ -11,6 +11,14 @@ Last updated: 2026-01-29
 
 > This approach focuses on `setting up the required infrastructure via Terraform`. It allows for source control of not only the solution code, connections, and setups `but also the infrastructure itself`.
 
+> When `Container App approach`:
+
+<img width="1911" height="989" alt="image" src="https://github.com/user-attachments/assets/6aec05ba-f9ea-4c95-86a8-c8e41d54331d" />
+
+<img width="1520" height="748" alt="image" src="https://github.com/user-attachments/assets/625710b8-c23f-4c0d-9ba2-32d3c8d807ed" />
+
+> When `Web App approach`:
+
 <div align="center">
   <img src="https://github.com/user-attachments/assets/77546e62-0cbe-4bb3-9581-1c2d8cfb4f70" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
