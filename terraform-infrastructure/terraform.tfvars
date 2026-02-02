@@ -1,4 +1,4 @@
-resource_group_name = "RG-AI-Retail-DemoX0"
+resource_group_name = "RG-AI-Retail-DemoX34"
 location            = "eastus2"
 name_prefix         = "zava"
 

@@ -8,6 +8,11 @@ import json
 import hashlib
 from typing import Optional
 from azure.ai.projects import AIProjectClient
+try:
+    # Prefer this for runtime agent IDs (asst_...)
+    from azure.ai.agents import AgentsClient  # type: ignore
+except Exception:
+    AgentsClient = None  # type: ignore
 from dotenv import load_dotenv
 
 
@@ -54,6 +59,18 @@ def _resolve_model_name(model: str) -> str:
     resolved = model_map.get(model, model)
     if resolved == model and "_" in model:
         resolved = model.replace("_", "-")
+    return resolved
+
+
+def _resolve_agents_client_model(model: str) -> str:
+    """Resolve model for AgentsClient.create_agent/update_agent.
+
+    The Agents runtime API rejects special/router deployments like "model-router".
+    Default to a concrete chat model deployment (env override supported).
+    """
+    resolved = _resolve_model_name(model)
+    if resolved in ("model-router", "model_router"):
+        return get_env("AZURE_AI_AGENT_MODEL_DEPLOYMENT", "gpt-4o-mini") or "gpt-4o-mini"
     return resolved
 
 
@@ -146,6 +163,83 @@ def _create_agent(project_client: AIProjectClient, *, model: str, name: str, ins
         return agents.create_prompt_agent(model=model, name=name, instructions=instructions)
 
     raise AttributeError("No supported agent creation method found in Azure AI Projects SDK")
+
+
+def _extract_agent_resource_id(agent_obj) -> str | None:
+    """Return the Azure AI Foundry agent resource id (used for manage/list/delete)."""
+    if agent_obj is None:
+        return None
+    for attr in ("id", "agent_id", "agentId"):
+        value = getattr(agent_obj, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_assistant_id(agent_obj) -> str | None:
+    """Return the OpenAI-style assistant id (asst_...) when present.
+
+    Some SDK surfaces expose both a Foundry agent resource id and the underlying
+    assistant id used by the threads/runs API.
+    """
+    if agent_obj is None:
+        return None
+    for attr in (
+        "assistant_id",
+        "assistantId",
+        "openai_assistant_id",
+        "openaiAssistantId",
+        "assistantID",
+    ):
+        value = getattr(agent_obj, attr, None)
+        if isinstance(value, str) and value.strip().startswith("asst"):
+            return value.strip()
+    # Some SDKs only populate `id` with an assistant id.
+    value = getattr(agent_obj, "id", None)
+    if isinstance(value, str) and value.strip().startswith("asst"):
+        return value.strip()
+    return None
+
+
+def _extract_runtime_id(agent_obj, env_var: str) -> str:
+    """Select the id that the runtime (threads/runs) API expects."""
+    assistant_id = _extract_assistant_id(agent_obj)
+    if assistant_id:
+        return assistant_id
+    resource_id = _extract_agent_resource_id(agent_obj)
+    if resource_id:
+        return resource_id
+    return f"unknown-{env_var}"
+
+
+def _get_agent_details(project_client: AIProjectClient, resource_id: str):
+    """Best-effort fetch of full agent details.
+
+    List operations sometimes return a lightweight object without `assistant_id`.
+    This tries common SDK shapes to retrieve a fuller representation.
+    """
+    if not project_client or not resource_id:
+        return None
+
+    agents = getattr(project_client, "agents", None)
+    if agents is None:
+        return None
+
+    # Newer SDKs
+    if hasattr(agents, "get_agent"):
+        try:
+            return agents.get_agent(agent_id=resource_id)
+        except Exception:
+            pass
+
+    # Generic get
+    if hasattr(agents, "get"):
+        try:
+            return agents.get(resource_id)
+        except Exception:
+            pass
+
+    return None
 
 
 from services.azure_auth import get_default_credential
@@ -274,7 +368,163 @@ def deploy_agents():
             prior_state = {}
 
     deployed_agents = {}
+    deployed_resource_ids: dict[str, str] = {}
     statuses = {}
+
+    # Preferred path: provision runtime agents via AgentsClient (OpenAI-style asst_* IDs).
+    # This matches what the threads/runs API expects at runtime.
+    if AgentsClient is not None:
+        try:
+            print("Initializing AgentsClient (runtime threads/runs API)...")
+
+            credential = get_default_credential()
+            project_name = get_env("AZURE_AI_PROJECT_NAME")
+            if not project_name:
+                raise ValueError("Missing required environment variable: AZURE_AI_PROJECT_NAME")
+
+            if project_endpoint and "cognitiveservices.azure.com" in project_endpoint:
+                print("Converting endpoint domain: cognitiveservices.azure.com -> services.ai.azure.com")
+                project_endpoint = project_endpoint.replace("cognitiveservices.azure.com", "services.ai.azure.com")
+                os.environ["AZURE_AI_PROJECT_ENDPOINT"] = project_endpoint
+
+            base_endpoint = project_endpoint.split("/api/")[0].rstrip("/")
+            full_project_endpoint = f"{base_endpoint}/api/projects/{project_name}"
+            print(f"Project Endpoint (full): {full_project_endpoint}")
+
+            agents_client = AgentsClient(endpoint=full_project_endpoint, credential=credential)
+
+            print("Fetching existing runtime agents (asst_* IDs)...")
+            existing_agents = {}
+            try:
+                agent_list = list(agents_client.list_agents())
+                for a in agent_list:
+                    name = getattr(a, "name", None)
+                    if isinstance(name, str) and name:
+                        existing_agents[name] = a
+                        existing_agents[_sanitize_agent_name(name)] = a
+                print(f"Found {len(agent_list)} runtime agent(s)")
+            except Exception as list_err:
+                print(f"Could not list runtime agents: {list_err}")
+                agent_list = []
+
+            for cfg in agents_config:
+                name = cfg["name"]
+                env_var = cfg["env_var"]
+                instr = cfg["instructions"]
+                sanitized_name = _sanitize_agent_name(name)
+                instr_hash = _hash_instructions(instr)
+                prior_hash = prior_state.get(env_var, {}).get("hash")
+
+                existing = existing_agents.get(sanitized_name) or existing_agents.get(name)
+                if existing:
+                    agent_id = getattr(existing, "id", None) or f"unknown-{env_var}"
+
+                    if prior_hash and prior_hash != instr_hash:
+                        print(f"[{env_var}] Updating runtime agent (instructions changed): {sanitized_name}")
+                        try:
+                            updated = agents_client.update_agent(
+                                agent_id,
+                                model=_resolve_agents_client_model(cfg["model"]),
+                                name=sanitized_name,
+                                description=name,
+                                instructions=instr,
+                            )
+                            agent_id = getattr(updated, "id", None) or agent_id
+                            statuses[env_var] = "updated"
+                        except Exception as ue:
+                            print(f"[{env_var}] Failed to update agent {sanitized_name}: {ue}")
+                            statuses[env_var] = "existing-no-update"
+                    else:
+                        print(f"[{env_var}] Reusing existing runtime agent: {sanitized_name} ({agent_id})")
+                        statuses[env_var] = "existing"
+
+                    deployed_agents[env_var] = str(agent_id)
+                    deployed_resource_ids[env_var] = str(agent_id)
+                    continue
+
+                print(f"[{env_var}] Creating new runtime agent: {sanitized_name}")
+                created = agents_client.create_agent(
+                    model=_resolve_agents_client_model(cfg["model"]),
+                    name=sanitized_name,
+                    description=name,
+                    instructions=instr,
+                )
+                agent_id = getattr(created, "id", None) or f"unknown-{env_var}"
+                deployed_agents[env_var] = str(agent_id)
+                deployed_resource_ids[env_var] = str(agent_id)
+                statuses[env_var] = "created"
+                print(f"[{env_var}] SUCCESS - Created runtime agent: {agent_id}")
+
+            # Persist state (hash + id)
+            new_state = {}
+            for cfg in agents_config:
+                ev = cfg["env_var"]
+                new_state[ev] = {
+                    "id": deployed_agents.get(ev),
+                    "resource_id": deployed_resource_ids.get(ev),
+                    "hash": _hash_instructions(cfg["instructions"]),
+                    "status": statuses.get(ev)
+                }
+            try:
+                with open(state_path, "w", encoding="utf-8") as sf:
+                    json.dump(new_state, sf, indent=2)
+                print(f"[STATE] State file updated: {state_path}")
+            except Exception as se:
+                print(f"WARNING: Failed to write state file: {se}")
+
+            # Update src/.env with runtime agent IDs
+            env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src', '.env'))
+            if os.path.exists(env_path):
+                try:
+                    import re
+
+                    with open(env_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    content = content.replace("cognitiveservices.azure.com", "services.ai.azure.com")
+
+                    for var, aid in deployed_agents.items():
+                        pattern = rf'^{re.escape(var)}=.*$'
+                        replacement = f'{var}={aid}'
+                        if re.search(pattern, content, flags=re.MULTILINE):
+                            content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+                        else:
+                            if not content.endswith("\n"):
+                                content += "\n"
+                            content += f"{replacement}\n"
+
+                    with open(env_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+
+                    print(f"Updated .env with agent IDs: {env_path}")
+                    print("Agent IDs written:")
+                    for var, aid in deployed_agents.items():
+                        print(f"  {var}: {aid}")
+                except Exception as ee:
+                    print(f"WARNING: Failed to update .env: {ee}")
+            else:
+                print(f"INFO: .env file not found for agent ID propagation: {env_path}")
+
+            print("\n" + "=" * 70)
+            print("DEPLOYMENT SUMMARY")
+            print("=" * 70)
+            for k, v in deployed_agents.items():
+                status = statuses.get(k, "unknown")
+                print(f"  {k}: {v} [{status}]")
+
+            payload = {"agents": deployed_agents, "statuses": statuses}
+            print("===AGENTS_JSON_START===")
+            print(json.dumps(payload, indent=2))
+            print("===AGENTS_JSON_END===")
+
+            return deployed_agents
+
+        except Exception as e:
+            print(
+                "WARNING: AgentsClient provisioning failed; falling back to AIProjectClient path: "
+                f"{e}. If this is '(unsupported_model)', ensure your AI Foundry has a real chat model "
+                "deployment (e.g., 'gpt-4o-mini') and set AZURE_AI_AGENT_MODEL_DEPLOYMENT accordingly."
+            )
 
     try:
         print("Initializing Azure AI Project Client...")
@@ -360,6 +610,7 @@ def deploy_agents():
             print(f"[{env_var}] No project client - using fallback ID")
             fallback_id = f"asst_local_{env_var}"
             deployed_agents[env_var] = fallback_id
+            deployed_resource_ids[env_var] = fallback_id
             statuses[env_var] = "fallback-no-client"
             continue
 
@@ -367,12 +618,12 @@ def deploy_agents():
         existing_agent = existing_agents.get(name) or existing_agents.get(sanitized_name)
         if existing_agent:
             agent_obj = existing_agent
-            agent_id = (
-                getattr(agent_obj, "id", None)
-                or getattr(agent_obj, "agent_id", None)
-                or getattr(agent_obj, "agentId", None)
-                or f"unknown-{env_var}"
-            )
+            resource_id = _extract_agent_resource_id(agent_obj) or f"unknown-{env_var}"
+
+            # Try to fetch full details to discover assistant_id (asst_...).
+            detailed = _get_agent_details(project_client, resource_id)
+            runtime_id = _extract_runtime_id(detailed or agent_obj, env_var)
+            deployed_resource_ids[env_var] = resource_id
             
             # Attempt update if instructions changed
             if prior_hash and prior_hash != instr_hash:
@@ -380,9 +631,9 @@ def deploy_agents():
                 try:
                     try:
                         if hasattr(project_client.agents, "delete_agent"):
-                            project_client.agents.delete_agent(agent_id=agent_id)
+                            project_client.agents.delete_agent(agent_id=resource_id)
                         else:
-                            project_client.agents.delete(agent_id)
+                            project_client.agents.delete(resource_id)
                     except Exception:
                         pass
 
@@ -392,22 +643,21 @@ def deploy_agents():
                         name=sanitized_name,
                         instructions=instr,
                     )
-                    agent_id = (
-                        getattr(new_agent, "id", None)
-                        or getattr(new_agent, "agent_id", None)
-                        or getattr(new_agent, "agentId", None)
-                        or agent_id
-                    )
+                    resource_id = _extract_agent_resource_id(new_agent) or resource_id
+
+                    detailed = _get_agent_details(project_client, resource_id)
+                    runtime_id = _extract_runtime_id(detailed or new_agent, env_var)
+                    deployed_resource_ids[env_var] = resource_id
                     statuses[env_var] = "recreated"
-                    print(f"[{env_var}] Successfully recreated: {agent_id}")
+                    print(f"[{env_var}] Successfully recreated: runtime_id={runtime_id} resource_id={resource_id}")
                 except Exception as ue:
                     print(f"[{env_var}] Failed to recreate {name}: {ue}")
                     statuses[env_var] = "existing-no-update"
 
-                deployed_agents[env_var] = agent_id
+                deployed_agents[env_var] = runtime_id
             else:
-                print(f"[{env_var}] Reusing existing agent: {name} ({agent_id})")
-                deployed_agents[env_var] = agent_id
+                print(f"[{env_var}] Reusing existing agent: {name} (runtime_id={runtime_id} resource_id={resource_id})")
+                deployed_agents[env_var] = runtime_id
                 statuses[env_var] = "existing"
             continue
 
@@ -420,15 +670,14 @@ def deploy_agents():
                 name=sanitized_name,
                 instructions=instr,
             )
-            agent_id = (
-                getattr(agent, "id", None)
-                or getattr(agent, "agent_id", None)
-                or getattr(agent, "agentId", None)
-                or f"unknown-{env_var}"
-            )
-            deployed_agents[env_var] = agent_id
+            resource_id = _extract_agent_resource_id(agent) or f"unknown-{env_var}"
+
+            detailed = _get_agent_details(project_client, resource_id)
+            runtime_id = _extract_runtime_id(detailed or agent, env_var)
+            deployed_agents[env_var] = runtime_id
+            deployed_resource_ids[env_var] = resource_id
             statuses[env_var] = "created"
-            print(f"[{env_var}] SUCCESS - Created agent: {agent_id}")
+            print(f"[{env_var}] SUCCESS - Created agent: runtime_id={runtime_id} resource_id={resource_id}")
         except Exception as ce:
             print(f"[{env_var}] FAILED to create {name}: {ce}")
             import traceback
@@ -437,6 +686,7 @@ def deploy_agents():
             # Use fallback local ID
             fallback_id = f"asst_local_{env_var}"
             deployed_agents[env_var] = fallback_id
+            deployed_resource_ids[env_var] = fallback_id
             statuses[env_var] = "fallback-creation-failed"
             print(f"[{env_var}] Using fallback local simulation: {fallback_id}")
 
@@ -446,6 +696,9 @@ def deploy_agents():
         ev = cfg["env_var"]
         new_state[ev] = {
             "id": deployed_agents.get(ev),
+            # Best-effort: keep the Foundry agent resource id for management/verification.
+            # If we only have a runtime id, this may be the same value.
+            "resource_id": deployed_resource_ids.get(ev),
             "hash": _hash_instructions(cfg["instructions"]),
             "status": statuses.get(ev)
         }

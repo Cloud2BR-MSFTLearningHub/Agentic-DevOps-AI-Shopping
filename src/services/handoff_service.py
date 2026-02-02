@@ -4,6 +4,7 @@ Uses GPT with structured output to classify user intent.
 """
 import os
 import json
+import logging
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 from azure.ai.inference import ChatCompletionsClient
@@ -37,6 +38,9 @@ class HandoffService:
     
     def __init__(self):
         """Initialize the handoff service with GPT client"""
+        self.logger = logging.getLogger("handoff_service")
+        if os.getenv("A2A_DEBUG", "").lower() in {"1", "true", "yes"}:
+            logging.basicConfig(level=logging.DEBUG)
         endpoint = (
             os.getenv("gpt_endpoint")
             or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -63,6 +67,7 @@ class HandoffService:
             foundry_endpoint = foundry_endpoint.replace('.services.azure.com', '.services.ai.azure.com')
         if not foundry_endpoint.endswith('/models'):
             foundry_endpoint = f"{foundry_endpoint.rstrip('/')}/models"
+        self.foundry_endpoint = foundry_endpoint
         
         if api_key:
             credential = AzureKeyCredential(api_key)
@@ -177,6 +182,7 @@ Classify this message into the appropriate domain."""
             }
             
         except Exception as e:
+            self.logger.exception("Intent classification failed (endpoint=%s, deployment=%s)", self.foundry_endpoint, self.deployment)
             # Default to cora on error
             return {
                 "domain": "cora",

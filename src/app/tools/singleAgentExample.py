@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential
@@ -29,6 +30,9 @@ deployment = (
 
 # Global client instance
 client = None
+logger = logging.getLogger("single_agent_example")
+if os.getenv("A2A_DEBUG", "").lower() in {"1", "true", "yes"}:
+    logging.basicConfig(level=logging.DEBUG)
 
 def get_client():
     """Lazily initialize and return the MSFT Foundry client"""
@@ -115,7 +119,8 @@ You can discuss a wide range of topics related to home improvement, construction
     ]
 
     # Call MSFT Foundry chat API
-    response = client.complete(
+    try:
+        response = client.complete(
         model=deployment,
         messages=messages,
         max_tokens=10000,
@@ -123,7 +128,10 @@ You can discuss a wide range of topics related to home improvement, construction
         top_p=1.0,
         frequency_penalty=0,
         presence_penalty=0
-    )
+        )
+    except Exception:
+        logger.exception("singleAgentExample GPT call failed (endpoint=%s, deployment=%s)", getattr(client, "_endpoint", None), deployment)
+        raise
     
     end_sum = time.time()
     print(f"generate_response Execution Time: {end_sum - start_time} seconds")
