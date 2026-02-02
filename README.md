@@ -19,7 +19,7 @@ Last updated: 2026-02-02
   
 </details>
 
-> E.g 
+> E.g Web App approach:
 
 <div align="center">
   <img width="950" alt="image" src="https://github.com/user-attachments/assets/886cca9f-9630-4d5f-aca1-b4d37a42fa2d" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
@@ -139,7 +139,7 @@ graph TD
    - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`).
    - Sets up A2A protocol infrastructure including event queues and monitoring.
 
-      > E.g 
+      > E.g Web App approach:
       
        <img width="1859" height="900" alt="image" src="https://github.com/user-attachments/assets/cd24ab7f-5ddd-46de-b266-0d0a24c45803" />
 
@@ -153,13 +153,13 @@ graph TD
    - Sets up a Python virtual environment.
    - Ingests `product_catalog.csv` into Cosmos DB with A2A event notifications.
 
-        > E.g 
+        > E.g Web App approach: 
 
         <https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848>
    
    - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
 
-        > E.g 
+        > E.g Web App approach:
         
         <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
