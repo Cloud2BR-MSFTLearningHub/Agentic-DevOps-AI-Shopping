@@ -54,6 +54,7 @@ Last updated: 2026-02-02
 `A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.` Like a communication pattern for coordinating multiple agents through structured messages, delegation, and (optionally) event-driven workflows.
 
 This repo contains **two multi-agent implementations**:
+
 - **Default deployed chat runtime (what the Dockerfile runs)**: WebSocket `/ws` in `src/chat_app_multi_agent.py`, which routes requests and orchestrates **real Azure AI Foundry Agents** in a multi-step handoff sequence.
 - **Optional A2A server implementation**: an A2A-style server under `src/a2a/` (routers, coordinator, event/task framework). Use this only if you deploy/run that entrypoint.
 
@@ -87,6 +88,7 @@ This repo contains **two multi-agent implementations**:
 
 > [!IMPORTANT]
 > A2A vs the default deployed chat runtime
+>
 > - **A2A server path**: event/task oriented framework under `src/a2a/` (only available if you deploy/run that server)
 > - **Default path**: `/ws` WebSocket chat + routing + sequential handoffs to real Foundry agents (no event queue required for the default flow)
 
