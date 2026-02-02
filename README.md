@@ -21,8 +21,10 @@ Last updated: 2026-02-02
 
 > E.g 
 
-<img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
-
+<div align="center">
+  <img width="950" alt="image" src="https://github.com/user-attachments/assets/886cca9f-9630-4d5f-aca1-b4d37a42fa2d" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+</div>
+  
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
 >
@@ -32,51 +34,61 @@ Last updated: 2026-02-02
 
 ## Key Features
 
-- **Enhanced A2A Protocol**: Agent-to-Agent communication with delegation patterns, specialized agent coordination, and factual data integration
-- **6-Agent Architecture**: Specialized AI agents with proper delegation through A2A protocol:
+- **Multi-agent chat orchestration (default runtime)**: WebSocket `/ws` chat app orchestrates multiple agents in a single conversation flow (routing + multi-step handoffs)
+- **6-Agent Architecture (real Azure AI Foundry agents)**:
   - **Cora (Shopper)**: Front-facing assistant for general customer queries
-  - **Interior Design Specialist**: Design expertise and style recommendations  
-  - **Inventory Manager**: Stock availability and product lookup coordination
-  - **Customer Loyalty**: Rewards management and discount optimization
-  - **Cart Manager**: Shopping cart operations and checkout coordination
-  - **Product Management Specialist**: Coordinates with Marketing Agent, Ranker Agent, and Product Information Plugin for comprehensive product services
-- **Specialized Agent Delegation**: Product Manager delegates marketing tasks to Marketing Agent and ranking tasks to Ranker Agent as appropriate
-- **Factual Data Plugin**: Product Information Plugin provides accurate product catalog data from predefined sources
-- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents with proper delegation patterns
-- **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle including enhanced A2A framework deployment
-- **A2A Task Coordination**: Advanced inter-agent task delegation with specialized expertise routing
-- **Data Pipeline Automation**: Automatically ingests product catalogs with comprehensive A2A event coordination
+  - **Interior Design Specialist**: Design expertise and style recommendations
+  - **Inventory Manager**: Stock availability + product lookup coordination
+  - **Customer Loyalty**: Rewards and discount-related queries
+  - **Cart Manager**: Cart operations and checkout-oriented help
+  - **Product Management Specialist**: Handles product-centric workflows and coordinates lookups across services
+- **Intent routing + handoff planning**: Classifies user intent and plans a multi-step sequence of agent calls (instead of a single “one agent answers everything” flow)
+- **Factual data integration**: Uses **Azure AI Search** (vector/keyword retrieval) and **Azure Cosmos DB** (catalog/state) during workflows
+- **Real persistent agents**: Uses Azure AI Foundry Agents with saved runtime IDs (OpenAI-style `asst_*`) provisioned during deployment
+- **Zero-touch deployment**: `terraform apply` provisions infra, ingests data, creates/updates agents, wires secrets/config, and deploys the Container Apps revision
+- **UI-visible diagnostics**: Correlated `error_id` responses and optional tracebacks via `A2A_DEBUG=true` for faster troubleshooting
+- **Optional A2A server included**: `src/a2a/` contains an A2A-style server framework, but it is not the default Container Apps entrypoint unless you deploy it explicitly
 
 ## About A2A Protocol
 
-`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.`
+`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.` Like a communication pattern for coordinating multiple agents through structured messages, delegation, and (optionally) event-driven workflows.
+
+This repo contains **two multi-agent implementations**:
+- **Default deployed chat runtime (what the Dockerfile runs)**: WebSocket `/ws` in `src/chat_app_multi_agent.py`, which routes requests and orchestrates **real Azure AI Foundry Agents** in a multi-step handoff sequence.
+- **Optional A2A server implementation**: an A2A-style server under `src/a2a/` (routers, coordinator, event/task framework). Use this only if you deploy/run that entrypoint.
 
 > What is A2A Protocol?
 
-- **Agent-to-Agent Communication**: Structured messaging between multiple AI agents
-- **Task Coordination**: Agents can delegate tasks to specialized agents
-- **Event-Driven Architecture**: Real-time event handling for agent interactions
-- **Agent Discovery**: Automatic detection and registration of available agents
-- **Protocol Standardization**: Consistent API for inter-agent communication
+- **Agent-to-Agent Communication**: structured messaging between multiple agents
+- **Task Coordination**: agents can delegate tasks to specialized agents
+- **Event-Driven Architecture (optional)**: event handling for asynchronous workflows
+- **Agent Discovery (optional)**: enumerate/register available agents
+- **Protocol Standardization**: consistent message formats and APIs
 
-> A2A Components in This Project:
+> How this repo implements multi-agent collaboration (default deployment)
 
-- **Agent Execution Framework**: Manages multiple agent instances (`src/a2a/server/agent_execution.py`)
-- **Event System**: Handles inter-agent communication and delegation (`src/a2a/server/events/`)
-- **Task Coordination**: Advanced task delegation between specialized agents (`src/a2a/server/tasks.py`)
-- **Request Handlers**: Processes agent-to-agent requests with delegation routing (`src/a2a/server/request_handlers.py`)
-- **Coordinator Agent**: Orchestrates complex multi-agent workflows (`src/a2a/agent/coordinator.py`)
-- **Specialized Agents**: Marketing Agent, Ranker Agent with delegation patterns (`src/app/agents/`)
-- **Product Information Plugin**: Factual data source for product catalog (`src/app/agents/product_information_plugin.py`)
-- **API Endpoints**: RESTful and WebSocket APIs for enhanced agent communication (`src/a2a/api/`)
+- **WebSocket chat interface**: `/ws` endpoint served by `src/chat_app_multi_agent.py`
+- **Intent routing**: classifies the user request and selects the primary domain (`src/services/handoff_service.py`)
+- **Handoff planning**: builds a multi-step sequence of which agents to call (`src/chat_app_multi_agent.py`)
+- **Remote agent execution**: calls Azure AI Foundry Agents using the saved `asst_*` IDs (`src/app/agents/agent_processor.py`)
+- **Factual lookups**: uses Azure AI Search and Cosmos DB during workflows (called from the app runtime)
 
-> A2A vs Traditional Multi-Agent Systems:
+> A2A components included in this repo (optional server)
 
-- **Standardized Protocol**: Uses consistent message formats and APIs
-- **Scalable Architecture**: Easily add new agents without modifying existing ones
-- **Real-time Communication**: WebSocket support for instant agent interactions
-- **Event-Driven**: Asynchronous event handling for better performance
-- **Infrastructure Integration**: Full Terraform deployment with monitoring and automation
+- **A2A server entrypoint**: `src/a2a/main.py`
+- **A2A API routers**: `src/a2a/api/`
+- **Agent execution framework**: `src/a2a/server/agent_execution.py`
+- **Event system**: `src/a2a/server/events/`
+- **Task coordination**: `src/a2a/server/tasks.py`
+- **Request handlers**: `src/a2a/server/request_handlers.py`
+- **Coordinator**: `src/a2a/agent/coordinator.py`
+- **Agent implementations (examples)**: `src/app/agents/`
+- **Product catalog helper/plugin (if used)**: `src/app/agents/product_information_plugin.py`
+
+> [!IMPORTANT]
+> A2A vs the default deployed chat runtime
+> - **A2A server path**: event/task oriented framework under `src/a2a/` (only available if you deploy/run that server)
+> - **Default path**: `/ws` WebSocket chat + routing + sequential handoffs to real Foundry agents (no event queue required for the default flow)
 
 ## Architecture
 
