@@ -308,6 +308,12 @@ $env:AZURE_LOG_LEVEL = "DEBUG"
 python pipelines/script.py
 ```
 
+**App (UI error details)**: Include traceback details in WebSocket error payloads.
+
+```powershell
+$env:A2A_DEBUG = "true"
+```
+
 **Terraform**:
 
 ```bash
@@ -347,7 +353,7 @@ terraform apply
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1416-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-02-02</p>
+  <img src="https://img.shields.io/badge/Total%20views-1361-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-30</p>
 </div>
 <!-- END BADGE -->
