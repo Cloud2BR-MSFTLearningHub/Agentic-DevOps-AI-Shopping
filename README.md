@@ -217,14 +217,17 @@ graph TD
       <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
 4. **Test Multi-Agent Routing (UI)**: `Adjust as needed, this is just a base`. For example:
-    - **General**: “Hi, who are you?” (Routed to **Cora**)
-    - **Inventory**: “Do you have the classic leather sofa in stock?” (Routed to **Inventory Manager**)
-    - **Design**: “What colors of green paint do you have?” (Routed to **Interior Design Specialist**)
-    - **Product Recommendations**: “Recommend modern furniture for my living room” (Routed to **Product Management Specialist**; may consult catalog/search depending on its prompt/tools)
-    - **Product Comparisons**: “Compare sectional sofas” (Routed to **Product Management Specialist**; comparison is handled within that agent)
-    - **Product Details**: “What are the specifications of product SOFA-001?” (Routed to **Product Management Specialist**; details are handled within that agent)
-    - **Multi-Agent**: “Find a sofa, then verify my loyalty points, and add it to my cart” (Coordinated across **Product Management → Customer Loyalty → Cart Manager** via the app’s multi-step routing)
-      
+
+      | Prompt | E.g Output | 
+      | --- | --- |
+      | **General**: <br/> “Hi, who are you?” <br/> (Routed to **Cora**) | <img width="1142" height="950" alt="image" src="https://github.com/user-attachments/assets/72a60b47-dbd6-48b8-bff6-48ebd92fff48" /> | 
+      |  **Inventory**: <br/>  “Do you have the classic leather sofa in stock?” <br/> (Routed to **Inventory Manager**) | | 
+      | **Design**: <br/>  “What colors of green paint do you have?” <br/> (Routed to **Interior Design Specialist**) | | 
+      | **Product Recommendations**: <br/>  “Recommend modern furniture for my living room” <br/> (Routed to **Product Management Specialist**; may consult catalog/search depending on its prompt/tools) | | 
+      | **Product Comparisons**: <br/>  “Compare sectional sofas” <br/> (Routed to **Product Management Specialist**; comparison is handled within that agent) | | 
+      | **Product Details**: <br/> “What are the specifications of product SOFA-001?” <br/> (Routed to **Product Management Specialist**; details are handled within that agent) | | 
+      | **Multi-Agent**: <br/> “Find a sofa, then verify my loyalty points, and add it to my cart” <br/> (Coordinated across **Product Management → Customer Loyalty → Cart Manager** via the app’s multi-step routing) | | 
+            
 <!-- START BADGE -->
 <div align="center">
   <img src="https://img.shields.io/badge/Total%20views-1416-limegreen" alt="Total views">
