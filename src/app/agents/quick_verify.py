@@ -11,6 +11,35 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _extract_agent_resource_id(agent_obj) -> str | None:
+    if agent_obj is None:
+        return None
+    for attr in ("id", "agent_id", "agentId"):
+        value = getattr(agent_obj, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_assistant_id(agent_obj) -> str | None:
+    if agent_obj is None:
+        return None
+    for attr in (
+        "assistant_id",
+        "assistantId",
+        "openai_assistant_id",
+        "openaiAssistantId",
+        "assistantID",
+    ):
+        value = getattr(agent_obj, attr, None)
+        if isinstance(value, str) and value.strip().startswith("asst"):
+            return value.strip()
+    value = getattr(agent_obj, "id", None)
+    if isinstance(value, str) and value.strip().startswith("asst"):
+        return value.strip()
+    return None
+
 def verify_agents():
     """Verify agents are accessible via the correct endpoint"""
     
@@ -68,7 +97,9 @@ def verify_agents():
     
     print(f"Expected agents (from state file): {len(expected_agents)}")
     for name, data in expected_agents.items():
-        print(f"  - {name}: {data.get('id')} ({data.get('status')})")
+        rid = data.get("resource_id")
+        aid = data.get("id")
+        print(f"  - {name}: runtime_id={aid} resource_id={rid} ({data.get('status')})")
     print()
     
     # Try to connect and list agents
@@ -96,34 +127,63 @@ def verify_agents():
         
         # Display found agents
         for agent in agents_list:
-            agent_id = getattr(agent, 'id', 'unknown')
+            agent_resource_id = _extract_agent_resource_id(agent) or 'unknown'
+            assistant_id = _extract_assistant_id(agent)
             agent_name = getattr(agent, 'name', 'unnamed')
             print(f"  [OK] {agent_name}")
-            print(f"       ID: {agent_id}")
+            print(f"       resource_id: {agent_resource_id}")
+            if assistant_id:
+                print(f"       assistant_id: {assistant_id}")
         
         # Compare with expected
-        found_ids = set(getattr(a, 'id', '') for a in agents_list)
-        expected_ids = set(d.get('id', '') for d in expected_agents.values())
+        found_resource_ids = set(_extract_agent_resource_id(a) or '' for a in agents_list)
+        found_assistant_ids = set(_extract_assistant_id(a) or '' for a in agents_list)
+
+        expected_runtime_ids = set(str(d.get('id', '') or '') for d in expected_agents.values())
+        expected_resource_ids = set(str(d.get('resource_id', '') or '') for d in expected_agents.values())
+
+        found_resource_ids.discard('')
+        found_assistant_ids.discard('')
+        expected_runtime_ids.discard('')
+        expected_resource_ids.discard('')
         
         print("\nComparison:")
-        print(f"  Expected: {len(expected_ids)} agents")
-        print(f"  Found:    {len(found_ids)} agents")
+        print(f"  Expected runtime IDs:  {len(expected_runtime_ids)}")
+        print(f"  Expected resource IDs: {len(expected_resource_ids)}")
+        print(f"  Found assistant IDs:   {len(found_assistant_ids)}")
+        print(f"  Found resource IDs:    {len(found_resource_ids)}")
         
-        missing = expected_ids - found_ids
-        extra = found_ids - expected_ids
+        # An expected runtime id (often asst_*) should match found assistant ids.
+        missing_runtime = expected_runtime_ids - found_assistant_ids
+        # An expected resource id should match found resource ids.
+        missing_resource = expected_resource_ids - found_resource_ids
+
+        # Extra reporting (best-effort)
+        extra_assistants = found_assistant_ids - expected_runtime_ids
+        extra_resources = found_resource_ids - expected_resource_ids
         
-        if missing:
-            print(f"\nWARNING: Missing agents: {missing}")
+        if missing_runtime:
+            print(f"\nWARNING: Missing assistant/runtime IDs: {missing_runtime}")
+
+        if missing_resource:
+            print(f"WARNING: Missing agent resource IDs: {missing_resource}")
         
-        if extra:
-            print(f"\n  Extra agents found: {extra}")
+        if extra_assistants:
+            print(f"\n  Extra assistant IDs found: {extra_assistants}")
+
+        if extra_resources:
+            print(f"  Extra resource IDs found: {extra_resources}")
         
-        if not missing and not extra:
+        if not missing_runtime and not missing_resource:
             print("\n[SUCCESS] All expected agents are present!")
             return True
         else:
             print("\nWARNING: Agent count mismatch")
-            return len(found_ids) >= len(expected_ids)
+            # Pass if we've found at least all expected runtime IDs or all expected resource IDs.
+            return (
+                (expected_runtime_ids.issubset(found_assistant_ids) if expected_runtime_ids else True)
+                and (expected_resource_ids.issubset(found_resource_ids) if expected_resource_ids else True)
+            )
         
     except Exception as e:
         print(f"\nERROR: Failed to verify agents: {e}")

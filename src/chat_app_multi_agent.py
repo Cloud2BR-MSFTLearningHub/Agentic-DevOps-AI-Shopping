@@ -163,6 +163,46 @@ def _get_env_any(*names: str) -> str | None:
     return None
 
 
+def _plan_handoff_sequence(domain: str, user_message: str) -> list[str]:
+    """Plan a minimal agent handoff sequence.
+
+    This is the missing piece for "agents talking to each other" in the chat UI.
+    The UI still sends a single user message, but the server can delegate to
+    multiple specialist agents and pass context forward.
+    """
+    msg = (user_message or "").lower()
+
+    # Always start with the classified domain.
+    sequence: list[str] = [domain]
+
+    # Product discovery and comparison are best handled by product management.
+    if any(k in msg for k in ["recommend", "recommendation", "find", "search", "compare", "best", "popular", "spec", "specification"]):
+        if "product_management" not in sequence:
+            sequence.append("product_management")
+
+    # Design requests often benefit from product discovery afterwards.
+    if any(k in msg for k in ["design", "interior", "room", "layout", "style", "color", "paint", "decor", "furniture"]):
+        if "interior_design" not in sequence:
+            sequence.append("interior_design")
+        if "product_management" not in sequence:
+            sequence.append("product_management")
+
+    # Purchase intent: check inventory then cart.
+    if any(k in msg for k in ["buy", "purchase", "checkout", "order", "add to cart", "add this", "add it", "remove from cart"]):
+        if "inventory" not in sequence:
+            sequence.append("inventory")
+        if "cart_management" not in sequence:
+            sequence.append("cart_management")
+
+    # Discounts: consult loyalty.
+    if any(k in msg for k in ["discount", "loyalty", "points", "member", "reward", "promo", "promotion", "deal"]):
+        if "customer_loyalty" not in sequence:
+            sequence.append("customer_loyalty")
+
+    # Cap to avoid runaway chains.
+    return sequence[:4]
+
+
 def get_agent_processor(domain: str):
     """Return a processor (remote if available, else local) for the domain."""
     agent_id_map = {
@@ -170,7 +210,8 @@ def get_agent_processor(domain: str):
         "inventory": _get_env_any("inventory_agent", "AGENT_INVENTORY_AGENT_ID"),
         "customer_loyalty": _get_env_any("customer_loyalty", "AGENT_CUSTOMER_LOYALTY_ID"),
         "cart_management": _get_env_any("cart_manager", "AGENT_CART_MANAGER_ID"),
-        "cora": _get_env_any("cora", "AGENT_CORA_ID")
+        "cora": _get_env_any("cora", "AGENT_CORA_ID"),
+        "product_management": _get_env_any("product_management", "AGENT_PRODUCT_MANAGEMENT_ID"),
     }
 
     agent_id = agent_id_map.get(domain)
@@ -180,7 +221,9 @@ def get_agent_processor(domain: str):
 
     # Prefer remote only if endpoint exists and agent id looks like a remote id
     remote_endpoint = os.getenv("AZURE_AI_AGENT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    if remote_endpoint and agent_id.startswith("asst_") and not agent_id.startswith("asst_local_"):
+    # Real Foundry agent IDs are not guaranteed to start with "asst_" (some SDKs/services use
+    # a name-based ID). Treat only explicit "asst_local_*" as local simulation.
+    if remote_endpoint and not agent_id.startswith("asst_local_"):
         try:
             return AgentProcessor(agent_id=agent_id, project_endpoint=remote_endpoint)
         except Exception as e:
@@ -257,119 +300,97 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     domain = classification["domain"]
                     logger.info(f"Classified as domain: {domain} (confidence: {classification['confidence']})")
-                    
-                    # Step 2: Get appropriate agent
-                    agent_processor = get_agent_processor(domain)
-                    
-                    if not agent_processor:
-                        # Instead of reverting to single-agent (which may lack config),
-                        # emit a message explaining the missing processor.
-                        warning = "Multi-agent processor unavailable; please verify configuration."
-                        await websocket.send_text(fast_json_dumps({
-                            "answer": warning,
-                            "agent": "unassigned",
-                            "cart": persistent_cart
-                        }))
-                        conversation_history.append({"role": "assistant", "content": warning})
-                        continue
-                    
-                    # Step 3: Prepare context for agent
-                    additional_context = {
-                        "cart": persistent_cart,
-                        "discount": customer_discount
-                    }
-                    
-                    if domain == "cart_management":
-                        # Cart manager needs full history
-                        additional_context["conversation_history"] = conversation_history
-                    
-                    # Step 4: Call agent and stream response
-                    response_text = ""
-                    for chunk in agent_processor.run_conversation_with_text_stream(
-                        user_message=user_message,
-                        conversation_history=conversation_history[-5:],  # Last 5 messages
-                        additional_context=additional_context
-                    ):
-                        response_text += chunk
-                    
-                    # Step 5: Parse response and flatten to a human answer
-                    parsed_json: Dict[str, Any] | None = None
-                    try:
-                        parsed_json = json.loads(response_text)
-                    except Exception:
-                        # Try secondary parse if nested JSON inside 'answer'
-                        if response_text.strip().startswith('{'):
-                            try:
-                                parsed_json = json.loads(response_text.strip())
-                            except Exception:
-                                parsed_json = None
 
-                    if parsed_json:
-                        # Some prompts return a JSON object as a *string* inside the
-                        # outer {"answer": "..."} wrapper (local agents). Lift it.
-                        if isinstance(parsed_json.get("answer"), str):
-                            inner_text = parsed_json["answer"].strip()
-                            if inner_text.startswith("{") and '"answer"' in inner_text:
-                                try:
-                                    inner_obj = json.loads(inner_text)
-                                    if isinstance(inner_obj, dict):
-                                        # Prefer inner values for these well-known fields.
-                                        for key in ("answer", "products", "image_output", "cart", "discount_percentage", "image_url"):
-                                            if key in inner_obj and inner_obj[key] is not None:
-                                                parsed_json[key] = inner_obj[key]
-                                except Exception:
-                                    pass
+                    # Step 2: Plan handoffs and execute sequence
+                    sequence = _plan_handoff_sequence(domain, user_message)
+                    logger.info(f"Multi-agent handoff sequence: {sequence}")
 
-                            # Some older prompts embed structured fields inside the
-                            # answer string (e.g., "answer: ...\nproducts: []"). Normalize.
-                            legacy = _parse_legacy_kv_block(parsed_json["answer"]) 
-                            if legacy:
-                                parsed_json.update({k: v for k, v in legacy.items() if v is not None})
+                    agent_outputs: list[dict[str, Any]] = []
+                    last_parsed_json: Dict[str, Any] | None = None
+                    last_domain = domain
 
-                        if "cart" in parsed_json and isinstance(parsed_json["cart"], list):
-                            persistent_cart = parsed_json["cart"]
-                        if "discount_percentage" in parsed_json and parsed_json["discount_percentage"]:
-                            customer_discount = parsed_json["discount_percentage"]
-                        flattened = _flatten_response_json(parsed_json)
+                    for step_idx, step_domain in enumerate(sequence):
+                        agent_processor = get_agent_processor(step_domain)
+                        if not agent_processor:
+                            raise RuntimeError(f"No agent processor available for domain={step_domain}")
+
+                        additional_context = {
+                            "cart": persistent_cart,
+                            "discount": customer_discount,
+                            "handoff": {
+                                "step": step_idx + 1,
+                                "sequence": sequence,
+                                "previous_outputs": agent_outputs[-3:],
+                            },
+                        }
+                        if step_domain == "cart_management":
+                            additional_context["conversation_history"] = conversation_history
+
+                        response_text = ""
+                        for chunk in agent_processor.run_conversation_with_text_stream(
+                            user_message=user_message,
+                            conversation_history=conversation_history[-5:],
+                            additional_context=additional_context,
+                        ):
+                            response_text += chunk
+
+                        parsed_json: Dict[str, Any] | None = None
+                        try:
+                            parsed_json = json.loads(response_text)
+                        except Exception:
+                            parsed_json = None
+
+                        if parsed_json and isinstance(parsed_json, dict):
+                            # Lift nested JSON if present.
+                            if isinstance(parsed_json.get("answer"), str):
+                                legacy = _parse_legacy_kv_block(parsed_json["answer"])
+                                if legacy:
+                                    parsed_json.update({k: v for k, v in legacy.items() if v is not None})
+                            if "cart" in parsed_json and isinstance(parsed_json["cart"], list):
+                                persistent_cart = parsed_json["cart"]
+                            if "discount_percentage" in parsed_json and parsed_json["discount_percentage"]:
+                                customer_discount = parsed_json["discount_percentage"]
+                            last_parsed_json = parsed_json
+
+                        agent_outputs.append({
+                            "agent": step_domain,
+                            "raw": response_text,
+                            "parsed": parsed_json,
+                        })
+                        last_domain = step_domain
+
+                    # Step 3: Build final response from last agent result
+                    if last_parsed_json:
+                        flattened = _flatten_response_json(last_parsed_json)
                         answer_text = _extract_plain_answer(flattened)
-                        
-                        # Extract image URL if present
-                        image_url = parsed_json.get("image_url")
+                        image_url = last_parsed_json.get("image_url")
                     else:
-                        answer_text = _extract_plain_answer(response_text)
+                        answer_text = _extract_plain_answer(agent_outputs[-1]["raw"] if agent_outputs else "")
                         image_url = None
 
-                    # Send natural language answer with metadata
                     response_data = {
                         "answer": answer_text,
-                        "agent": domain,
+                        "agent": last_domain,
                         "cart": persistent_cart,
-                        "discount": customer_discount
+                        "discount": customer_discount,
                     }
 
                     # Forward structured fields if present.
-                    if parsed_json:
-                        if "products" in parsed_json:
-                            response_data["products"] = parsed_json.get("products")
-                        if "image_output" in parsed_json:
-                            response_data["image_output"] = parsed_json.get("image_output")
-
-                    # If the agent returned diagnostic error details, forward them to the UI.
-                    if parsed_json:
-                        if isinstance(parsed_json.get("error"), str):
-                            response_data["error"] = parsed_json["error"]
-                        if parsed_json.get("error_id") is not None:
-                            response_data["error_id"] = parsed_json.get("error_id")
-                    
-                    # Include image URL if available
+                    if last_parsed_json:
+                        if "products" in last_parsed_json:
+                            response_data["products"] = last_parsed_json.get("products")
+                        if "image_output" in last_parsed_json:
+                            response_data["image_output"] = last_parsed_json.get("image_output")
+                        if isinstance(last_parsed_json.get("error"), str):
+                            response_data["error"] = last_parsed_json["error"]
+                        if last_parsed_json.get("error_id") is not None:
+                            response_data["error_id"] = last_parsed_json.get("error_id")
                     if image_url:
                         response_data["image_url"] = image_url
-                    
-                    await websocket.send_text(fast_json_dumps(response_data))
 
+                    await websocket.send_text(fast_json_dumps(response_data))
                     conversation_history.append({"role": "assistant", "content": answer_text})
-                    
-                    logger.info(f"Response sent successfully from {domain} agent")
+                    logger.info(f"Response sent successfully (final agent={last_domain})")
                     
                 else:
                     # === SINGLE-AGENT MODE (Legacy) ===

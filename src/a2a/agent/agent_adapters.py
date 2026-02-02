@@ -71,9 +71,9 @@ class ZavaAgentAdapter(BaseAgentExecutor):
         remote_endpoint = os.getenv("AZURE_AI_AGENT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
         
         # Try remote first if available
-        if (remote_endpoint and agent_id and 
-            agent_id.startswith("asst_") and 
-            not agent_id.startswith("asst_local_")):
+        # Real Foundry agent IDs are not guaranteed to start with "asst_".
+        # Only treat explicit "asst_local_*" IDs as local simulation.
+        if (remote_endpoint and agent_id and not agent_id.startswith("asst_local_")):
             try:
                 self._agent_processor = AgentProcessor(
                     agent_id=agent_id,

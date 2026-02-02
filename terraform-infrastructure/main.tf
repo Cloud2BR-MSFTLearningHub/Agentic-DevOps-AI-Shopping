@@ -514,6 +514,11 @@ resource "azurerm_container_app" "app" {
         secret_name = "storage-connection-string"
       }
 
+      env {
+        name  = "A2A_DEBUG"
+        value = "true"
+      }
+
       # Cosmos auth: use AAD when local auth disabled
       dynamic "env" {
         for_each = var.enable_cosmos_local_auth ? [1] : []
@@ -552,6 +557,10 @@ resource "azurerm_container_app" "app" {
         value = data.external.agents_state.result["agent_cart_manager_id"]
       }
       env {
+        name  = "AGENT_PRODUCT_MANAGEMENT_ID"
+        value = data.external.agents_state.result["agent_product_management_id"]
+      }
+      env {
         name  = "cora"
         value = data.external.agents_state.result["agent_cora_id"]
       }
@@ -570,6 +579,10 @@ resource "azurerm_container_app" "app" {
       env {
         name  = "cart_manager"
         value = data.external.agents_state.result["agent_cart_manager_id"]
+      }
+      env {
+        name  = "product_management"
+        value = data.external.agents_state.result["agent_product_management_id"]
       }
     }
 
@@ -1508,7 +1521,7 @@ resource "null_resource" "ai_model_deployments" {
             --model-name "gpt-4o-mini" `
             --model-version "2024-07-18" `
             --model-format "OpenAI" `
-            --sku-capacity 10 `
+            --sku-capacity 1 `
             --sku-name "GlobalStandard"
         
             if ($LASTEXITCODE -eq 0) {
@@ -2129,7 +2142,7 @@ resource "null_resource" "deploy_multi_agents" {
       }
       
       Write-Host "Installing required Azure SDK packages..."
-      & $pythonCmd -m pip install -q --pre 'azure-ai-projects>=2.0.0b1' azure-identity python-dotenv
+      & $pythonCmd -m pip install -q --pre 'azure-ai-projects>=2.0.0b1' 'azure-ai-agents>=1.1.0' azure-identity python-dotenv
       
       if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to install required packages"
