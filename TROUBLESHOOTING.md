@@ -308,6 +308,12 @@ $env:AZURE_LOG_LEVEL = "DEBUG"
 python pipelines/script.py
 ```
 
+**App (UI error details)**: Include traceback details in WebSocket error payloads.
+
+```powershell
+$env:A2A_DEBUG = "true"
+```
+
 **Terraform**:
 
 ```bash
