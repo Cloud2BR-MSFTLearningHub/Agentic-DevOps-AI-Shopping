@@ -283,6 +283,17 @@ resource "azurerm_search_service" "search" {
   identity { type = "SystemAssigned" }
 }
 
+# Grant the current Terraform principal access to Search *data-plane* operations
+# (view/create indexes, query documents). Without this, the Azure Portal may not
+# show indexes even if they exist.
+resource "azurerm_role_assignment" "search_index_data_contributor_user" {
+  scope                = azurerm_search_service.search.id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = local.principal_id
+
+  depends_on = [azurerm_search_service.search]
+}
+
 resource "azurerm_log_analytics_workspace" "law" {
   name                = local.log_analytics_name
   location            = var.location
