@@ -43,7 +43,7 @@ Last updated: 2026-02-02
   - **Cart Manager**: Cart operations and checkout-oriented help
   - **Product Management Specialist**: Handles product-centric workflows and coordinates lookups across services
 - **Intent routing + handoff planning**: Classifies user intent and plans a multi-step sequence of agent calls (instead of a single “one agent answers everything” flow)
-- **Factual data integration**: Uses **Azure AI Search** (vector/keyword retrieval) and **Azure Cosmos DB** (catalog/state) during workflows
+- **Factual data integration (pipeline-first)**: Terraform runs pipelines that ingest the catalog into **Azure Cosmos DB** and build an **Azure AI Search** index; runtime lookups can be enabled/extended as needed
 - **Real persistent agents**: Uses Azure AI Foundry Agents with saved runtime IDs (OpenAI-style `asst_*`) provisioned during deployment
 - **Zero-touch deployment**: `terraform apply` provisions infra, ingests data, creates/updates agents, wires secrets/config, and deploys the Container Apps revision
 - **UI-visible diagnostics**: Correlated `error_id` responses and optional tracebacks via `A2A_DEBUG=true` for faster troubleshooting
@@ -72,7 +72,7 @@ This repo contains **two multi-agent implementations**:
 - **Intent routing**: classifies the user request and selects the primary domain (`src/services/handoff_service.py`)
 - **Handoff planning**: builds a multi-step sequence of which agents to call (`src/chat_app_multi_agent.py`)
 - **Remote agent execution**: calls Azure AI Foundry Agents using the saved `asst_*` IDs (`src/app/agents/agent_processor.py`)
-- **Factual lookups**: uses Azure AI Search and Cosmos DB during workflows (called from the app runtime)
+- **Factual lookups (optional)**: Terraform creates/loads Cosmos DB and Azure AI Search data; the default chat runtime can be extended to query these sources during workflows
 
 > A2A components included in this repo (optional server)
 
@@ -137,27 +137,25 @@ graph TD
 1. **Infrastructure Provisioning**:
    - Creates Resource Group, Cosmos DB, MSFT Foundry, AI Search, Storage Account, Key Vault, and Container Registry (ACR).
    - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`).
-   - Sets up A2A protocol infrastructure including event queues and monitoring.
+   - Sets up monitoring (Log Analytics + Application Insights). Optional A2A components (like an in-memory event queue) are part of the app codebase, not separate Azure resources.
 
       > E.g Web App approach:
       
        <img width="1859" height="900" alt="image" src="https://github.com/user-attachments/assets/cd24ab7f-5ddd-46de-b266-0d0a24c45803" />
 
 2. **A2A Framework Deployment**:
-   - Initializes the Agent-to-Agent protocol server components.
-   - Sets up event queue system for inter-agent communication.
-   - Configures agent discovery and registration services.
-   - Deploys A2A monitoring and automation frameworks.
+   - Includes an optional A2A-style server implementation under `src/a2a/` (routers, coordinator, in-memory event queue, monitoring helpers).
+   - Note: the default deployed runtime uses `src/chat_app_multi_agent.py` (`/ws`). The A2A server endpoints are only available if you deploy/run the `src/a2a/main.py` entrypoint.
 
 3. **Data Pipeline Execution**:
    - Sets up a Python virtual environment.
-   - Ingests `product_catalog.csv` into Cosmos DB with A2A event notifications.
+   - Ingests `src/data/updated_product_catalog(in).csv` into Cosmos DB.
 
         > E.g Web App approach: 
 
         <https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848>
    
-   - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
+   - Creates and populates an Azure AI Search index with vector embeddings.
 
         > E.g Web App approach:
         
@@ -201,9 +199,13 @@ graph TD
        <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
 2. **Verify A2A Protocol Endpoints**:
-   - Check A2A Chat API: `https://<your-app-name>.azurecontainerapps.io/a2a/chat`
-   - Check A2A Server API: `https://<your-app-name>.azurecontainerapps.io/a2a/api/docs`
+   - These endpoints are **only available if you deploy/run the A2A server entrypoint** (`src/a2a/main.py`).
+   - A2A Chat API (HTTP): `https://<your-app-name>.azurecontainerapps.io/a2a/chat/message`
+   - A2A Chat API (WebSocket): `wss://<your-app-name>.azurecontainerapps.io/a2a/chat/ws`
+   - A2A Chat streaming: `https://<your-app-name>.azurecontainerapps.io/a2a/chat/stream`
+   - A2A Chat stats: `https://<your-app-name>.azurecontainerapps.io/a2a/chat/stats`
    - Verify agent discovery: `https://<your-app-name>.azurecontainerapps.io/a2a/server/agents`
+   - OpenAPI docs (FastAPI default): `https://<your-app-name>.azurecontainerapps.io/docs`
 
 3. **Verify Enhanced Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com).
