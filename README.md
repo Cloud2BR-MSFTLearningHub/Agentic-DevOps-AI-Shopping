@@ -223,12 +223,9 @@ graph TD
       | Prompt | E.g Output | 
       | --- | --- |
       | **General**: <br/> “Hi, who are you?” <br/> (Routed to **Cora**) | <img width="1142" height="950" alt="image" src="https://github.com/user-attachments/assets/72a60b47-dbd6-48b8-bff6-48ebd92fff48" /> | 
-      |  **Inventory**: <br/>  “Do you have the classic leather sofa in stock?” <br/> (Routed to **Inventory Manager**) | | 
-      | **Design**: <br/>  “What colors of green paint do you have?” <br/> (Routed to **Interior Design Specialist**) | | 
-      | **Product Recommendations**: <br/>  “Recommend modern furniture for my living room” <br/> (Routed to **Product Management Specialist**; may consult catalog/search depending on its prompt/tools) | | 
-      | **Product Comparisons**: <br/>  “Compare sectional sofas” <br/> (Routed to **Product Management Specialist**; comparison is handled within that agent) | | 
-      | **Product Details**: <br/> “What are the specifications of product SOFA-001?” <br/> (Routed to **Product Management Specialist**; details are handled within that agent) | | 
-      | **Multi-Agent**: <br/> “Find a sofa, then verify my loyalty points, and add it to my cart” <br/> (Coordinated across **Product Management → Customer Loyalty → Cart Manager** via the app’s multi-step routing) | | 
+      | **Design**: <br/>  “Recommend modern furniture for my living room” <br/> (Routed to **Interior Design Specialist**) | <img width="1167" height="963" alt="image" src="https://github.com/user-attachments/assets/5e602f08-06ca-4866-9892-ade211a3a413" /> | 
+      | **Product Comparisons**: <br/>  “Compare sectional sofas” <br/> (Routed to **Product Management Specialist**; comparison is handled within that agent) | <img width="1208" height="836" alt="image" src="https://github.com/user-attachments/assets/0649f459-e8d5-4916-a442-4cbec9b85fa6" /> | 
+      | **Loyalty Details**: <br/> “Give me a summary of my loyalty account benefits” <br/> (Routed to **Customer Loyalty**) | <img width="1211" height="955" alt="image" src="https://github.com/user-attachments/assets/45dec561-4f9a-433e-a264-09af2bff4453" /> | 
             
 <!-- START BADGE -->
 <div align="center">
