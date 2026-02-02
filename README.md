@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-01-29
+Last updated: 2026-02-02
 
 ----------
 
@@ -150,15 +150,15 @@ graph TD
         <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
 4. **Enhanced Agent Creation & A2A Registration**:
-   - Installs the `azure-ai-projects` SDK and Microsoft Agent Framework.
-   - Connects to MSFT Foundry for agent hosting.
-   - Provisions 6 specialized agents with enhanced A2A protocol integration:
+   - Installs the Azure AI SDKs (`azure-ai-projects` + `azure-ai-agents`) and authenticates via Entra ID.
+   - Connects to MSFT Foundry / Agents API for agent hosting.
+   - Provisions 6 specialized agents with enhanced A2A-style routing:
      - Core shopping agents (5) plus Product Management Specialist
      - Marketing Agent and Ranker Agent with delegation patterns
      - Product Information Plugin with predefined catalog data
    - Registers all agents with the enhanced A2A discovery service.
    - Configures delegation relationships between Product Manager and specialized agents.
-   - Saves the unique Agent IDs, delegation endpoints, and A2A configuration to the `.env` file.
+   - Saves the unique runtime Agent IDs (OpenAI-style `asst_*`), endpoints, and configuration to the `.env` file.
 
       > E.g `Classic UI`
       
@@ -170,26 +170,26 @@ graph TD
 
 5. **Application Deployment**:
    - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
-   - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
-   - Deploys the container with A2A server components and restarts the app.
+   - Deploys the container to Azure Container Apps (default) with the generated Agent IDs, endpoints, and credentials.
+   - Updates the running revision so the app picks up the latest agent IDs and configuration.
 
 ## Verification
 
 > After deployment completes, verify the system:
 
-1. **Check the Web App**:
-   - The Terraform output will provide the `application_url`.
-   - Visit `https://<your-app-name>.azurewebsites.net`.
-   - You should see the Zava chat interface with A2A protocol support.
+1. **Check the App**:
+   - The Terraform output will provide the `chat_application_url`.
+   - Visit `https://<your-app-name>.azurecontainerapps.io`.
+   - You should see the Zava chat interface with multi-agent routing enabled.
 
       > E.g `Classic UI`
       
        <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
 2. **Verify A2A Protocol Endpoints**:
-   - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
-   - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
-   - Verify agent discovery: `https://<your-app-name>.azurewebsites.net/a2a/server/agents`
+   - Check A2A Chat API: `https://<your-app-name>.azurecontainerapps.io/a2a/chat`
+   - Check A2A Server API: `https://<your-app-name>.azurecontainerapps.io/a2a/api/docs`
+   - Verify agent discovery: `https://<your-app-name>.azurecontainerapps.io/a2a/server/agents`
 
 3. **Verify Enhanced Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com).
@@ -213,7 +213,7 @@ graph TD
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1416-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-02-02</p>
+  <img src="https://img.shields.io/badge/Total%20views-1361-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-30</p>
 </div>
 <!-- END BADGE -->
