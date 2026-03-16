@@ -16,6 +16,10 @@ Last updated: 2026-02-02
 <summary><b>List of References</b> (Click to expand)</summary>
   
 - [Microsoft Foundry SDKs and Endpoints](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/sdk-overview?view=foundry&pivots=programming-language-python)
+- Microsoft Defender for Cloud (DevOps security)
+   - [Connect GitHub to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-github)
+   - [Connect Azure DevOps to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-devops)
+   - [DevOps security permissions and prerequisites](https://learn.microsoft.com/azure/defender-for-cloud/devops-support)
   
 </details>
 
@@ -28,9 +32,20 @@ Last updated: 2026-02-02
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
 >
-> 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
+> 1. Pick a deployment approach (Container Apps or App Service)
+> 2. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
+
+### Deployment Approaches (pick one)
+
+- **Container Apps (recommended default in this repo)**
+   - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "containerapps"`
+   - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
+
+- **App Service (Linux custom container)**
+   - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "appservice"` and choose `app_service_sku` (e.g. `P0v3`)
+   - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
 
 ## Key Features
 
@@ -48,6 +63,54 @@ Last updated: 2026-02-02
 - **Zero-touch deployment**: `terraform apply` provisions infra, ingests data, creates/updates agents, wires secrets/config, and deploys the Container Apps revision
 - **UI-visible diagnostics**: Correlated `error_id` responses and optional tracebacks via `A2A_DEBUG=true` for faster troubleshooting
 - **Optional A2A server included**: `src/a2a/` contains an A2A-style server framework, but it is not the default Container Apps entrypoint unless you deploy it explicitly
+
+## More Security with Microsoft Defender
+
+> [!IMPORTANT]
+> **Defender is enabled by default in this repo's Terraform defaults.** This can incur Azure costs (Defender plans) and will provision DevOps security connector resources that still require a one-time interactive authorization step for GitHub/Azure DevOps.
+> To opt out, explicitly set the related variables to `false` in [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars).
+
+This repo supports two complementary “Defender” scenarios:
+
+1. **Microsoft Defender for Cloud (workload protection / cloud posture)**
+   - This repo includes an opt-in Terraform configuration to enable Defender for Cloud plans at the subscription scope.
+   - Toggle via `enable_defender_for_cloud` in [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars) (or the example `tfvars` files above).
+   - Note: enabling Defender plans can incur Azure costs.
+
+2. **Defender for Cloud DevOps Security (GHAS / ADO aggregation & reporting)**
+   - This repo can provision the **connector resources** via Terraform, but onboarding still requires **interactive authorization** to GitHub and/or Azure DevOps in the Azure portal (or providing a one-time OAuth code).
+   - This is the feature area that provides the “central dashboard” experience for GHAS-like findings (code scanning, dependency, secrets) across **organizations/projects** (not just individual repos).
+   - It can optionally add **Pull Request annotations** (a write-back action) but only when you explicitly enable/configure that feature.
+
+### Opt out (disable Defender)
+
+- In [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars), set:
+   - `enable_defender_for_cloud = false`
+   - `enable_defender_devops_security = false`
+
+### Visibility-first rollout (recommended for demos)
+
+- Onboard **GitHub connector only** first to validate the Defender dashboards/workbooks.
+- Onboard **Azure DevOps connector** only in a **sandbox org/project**.
+- Keep **PR annotations OFF** initially (no write-back to PRs) until you decide to enable them.
+
+### If the Azure portal blade errors
+
+If the Azure portal **Defender for Cloud → Environment settings** page fails to load with an error like:
+`ECS feature flags for project 'Defenders' are not initialized (ErrorAcquiringViewModel)`
+
+Use one of these workarounds:
+
+- **Open the connector resource directly** (bypasses the Environment Settings blade):
+   - Find the connector resource IDs from Terraform outputs (look for `defender_devops_security_connector_ids`).
+   - Open in the portal using this pattern:
+      - `https://portal.azure.com/#resource/<connector-resource-id>/overview`
+      - Example: `.../providers/Microsoft.Security/securityConnectors/github-connector`
+
+- **List the connector IDs via CLI** (then open them with the URL above):
+   - `az resource list -g <rg-name> --resource-type Microsoft.Security/securityConnectors -o table`
+
+- **Browser reset**: try InPrivate/Incognito, disable extensions (ad blockers), and sign out/in.
 
 ## About A2A Protocol
 

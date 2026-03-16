@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Root python dependencies (if used)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # App dependencies
+  - package-ecosystem: "pip"
+    directory: "/src"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # A2A server dependencies
+  - package-ecosystem: "pip"
+    directory: "/src/a2a"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Terraform provider updates
+  - package-ecosystem: "terraform"
+    directory: "/terraform-infrastructure"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

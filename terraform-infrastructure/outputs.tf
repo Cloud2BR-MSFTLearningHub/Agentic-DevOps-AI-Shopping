@@ -48,6 +48,40 @@ output "subscription_id" {
   description = "Azure subscription ID"
 }
 
+output "defender_devops_security_next_steps" {
+  description = "Next steps to finish Defender for Cloud DevOps security onboarding (authorization requires interactive consent)."
+  value = trimspace(<<-EOT
+  Defender for Cloud DevOps security connector resources can be created by Terraform, but GitHub/Azure DevOps authorization requires a one-time interactive consent step.
+
+  1) Azure portal: Microsoft Defender for Cloud -> Environment settings
+     https://portal.azure.com/#view/Microsoft_Azure_Security/EnvironmentSettingsBlade
+
+  2) Find your connector(s) in resource group: ${azurerm_resource_group.rg.name}
+     - GitHub connector name: ${var.defender_devops_github_connector_name} (created when enable_defender_devops_security=true and enable_defender_devops_security_github=true)
+     - Azure DevOps connector name: ${var.defender_devops_ado_connector_name} (created when enable_defender_devops_security=true and enable_defender_devops_security_ado=true)
+
+  3) Complete the 'Authorize' / 'Install app' step for GitHub (Org Owner) and/or the OAuth authorization for Azure DevOps (Project Collection Admin).
+
+  Important:
+  - The `Microsoft.Security/securityConnectors/devops` configuration resource requires a one-time OAuth code on create/update.
+  - This repo will only attempt to create `/devops/default` via Terraform when `defender_devops_*_oauth_code` is provided.
+    Otherwise, use the Azure portal onboarding flow to authorize.
+
+  Notes:
+  - GitHub-only is the safest starting point for demos.
+  - PR annotations are optional and can remain OFF for visibility-first mode.
+  EOT
+  )
+}
+
+output "defender_devops_security_connector_ids" {
+  description = "Resource IDs for the DevOps security connectors (if created)."
+  value = {
+    github = try(azapi_resource.defender_devops_github_connector[0].id, null)
+    ado    = try(azapi_resource.defender_devops_ado_connector[0].id, null)
+  }
+}
+
 output "application_insights_connection_string" {
   value       = azurerm_application_insights.appinsights.connection_string
   description = "Application Insights connection string"
@@ -259,7 +293,7 @@ output "a2a_automation_endpoints" {
       testing     = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/test/run"
       deployment  = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/deploy/trigger"
       performance = "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/performance"
-    } : {
+      } : {
       status      = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/status"
       metrics     = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/metrics"
       health      = "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/health"
@@ -285,23 +319,23 @@ output "deployment_summary" {
   description = "Summary of all deployed components"
   value = {
     web_application = {
-      url = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}"
+      url          = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}"
       health_check = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/health"
     }
     ai_services = {
-      foundry_endpoint = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-      project_name = local.ai_project_name
+      foundry_endpoint    = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+      project_name        = local.ai_project_name
       multi_agent_enabled = var.enable_multi_agent
     }
     automation_framework = {
-      enabled = var.enable_a2a_automation
-      port = var.a2a_port
+      enabled    = var.enable_a2a_automation
+      port       = var.a2a_port
       monitoring = var.enable_monitoring_dashboards
-      testing = var.enable_continuous_testing
+      testing    = var.enable_continuous_testing
       endpoints = var.enable_a2a_automation ? {
-        status = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/status" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/status"
+        status  = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/status" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/status"
         metrics = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/metrics" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/metrics"
-        health = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/health"
+        health  = var.deployment_target == "appservice" ? "https://${azurerm_linux_web_app.app[0].default_hostname}/a2a/automation/health" : "https://${azurerm_container_app.app[0].ingress[0].fqdn}/a2a/automation/health"
       } : null
     }
     data_services = {

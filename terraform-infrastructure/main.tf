@@ -8,6 +8,179 @@ resource "azurerm_resource_group" "rg" {
 # Subscription context for role assignments
 data "azurerm_client_config" "current" {}
 
+locals {
+  # These subscription pricing resources are global per-subscription and often pre-exist.
+  # We keep the managed set fixed to match the import blocks below.
+  defender_for_cloud_pricing_resource_types = toset([
+    "StorageAccounts",
+    "AppServices",
+    "KeyVaults",
+    "Containers",
+    "ContainerRegistry",
+  ])
+}
+
+# Microsoft Defender for Cloud (subscription-level pricing)
+# Disabled by default because it can incur costs. Enable via terraform.tfvars.
+resource "azurerm_security_center_subscription_pricing" "defender_for_cloud" {
+  for_each = var.enable_defender_for_cloud ? local.defender_for_cloud_pricing_resource_types : toset([])
+
+  resource_type = each.value
+  tier          = var.defender_for_cloud_tier
+}
+
+# Subscription pricing resources are pre-created in Azure. If they're already present,
+# Terraform must import them into state before it can manage updates.
+# These import blocks make `terraform apply` work without manual `terraform import`.
+import {
+  to = azurerm_security_center_subscription_pricing.defender_for_cloud["StorageAccounts"]
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Security/pricings/StorageAccounts"
+}
+
+import {
+  to = azurerm_security_center_subscription_pricing.defender_for_cloud["AppServices"]
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Security/pricings/AppServices"
+}
+
+import {
+  to = azurerm_security_center_subscription_pricing.defender_for_cloud["KeyVaults"]
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Security/pricings/KeyVaults"
+}
+
+import {
+  to = azurerm_security_center_subscription_pricing.defender_for_cloud["Containers"]
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Security/pricings/Containers"
+}
+
+import {
+  to = azurerm_security_center_subscription_pricing.defender_for_cloud["ContainerRegistry"]
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Security/pricings/ContainerRegistry"
+}
+
+locals {
+  enable_defender_devops_github = var.enable_defender_devops_security && var.enable_defender_devops_security_github
+  enable_defender_devops_ado    = var.enable_defender_devops_security && var.enable_defender_devops_security_ado
+
+  github_devops_config_properties = merge(
+    {
+      autoDiscovery = var.defender_devops_auto_discovery
+    },
+    var.defender_devops_auto_discovery == "Disabled" ? {
+      topLevelInventoryList = tolist(var.defender_devops_github_inventory_list)
+    } : {},
+    var.defender_devops_github_oauth_code != null ? {
+      authorization = {
+        code = var.defender_devops_github_oauth_code
+      }
+    } : {}
+  )
+
+  ado_devops_config_properties = merge(
+    {
+      autoDiscovery = var.defender_devops_auto_discovery
+    },
+    var.defender_devops_auto_discovery == "Disabled" ? {
+      topLevelInventoryList = tolist(var.defender_devops_ado_inventory_list)
+    } : {},
+    var.defender_devops_ado_oauth_code != null ? {
+      authorization = {
+        code = var.defender_devops_ado_oauth_code
+      }
+    } : {}
+  )
+}
+
+# DevOps connector hierarchy identifiers
+# The Security Connector API validates hierarchyIdentifier for DevOps environments as either
+# a provider-specific resourceId or a GUID. Use stable GUIDs so `terraform apply` can succeed
+# without requiring org/repo resourceIds at provisioning time.
+resource "random_uuid" "defender_devops_github_hierarchy_id" {}
+resource "random_uuid" "defender_devops_ado_hierarchy_id" {}
+
+# Defender for Cloud DevOps security connectors (GitHub + Azure DevOps)
+# NOTE: Creating these resources is automatable, but authorization requires an interactive consent step
+# in the Azure portal (or providing a one-time OAuth code).
+
+resource "azapi_resource" "defender_devops_github_connector" {
+  count                     = local.enable_defender_devops_github ? 1 : 0
+  type                      = "Microsoft.Security/securityConnectors@2024-08-01-preview"
+  name                      = var.defender_devops_github_connector_name
+  location                  = var.location
+  parent_id                 = azurerm_resource_group.rg.id
+  schema_validation_enabled = false
+
+  body = jsonencode({
+    properties = {
+      environmentName     = "Github"
+      hierarchyIdentifier = random_uuid.defender_devops_github_hierarchy_id.result
+      environmentData = {
+        environmentType = "GithubScope"
+      }
+      offerings = [
+        {
+          offeringType = "CspmMonitorGithub"
+        }
+      ]
+    }
+  })
+
+  depends_on = [azurerm_resource_group.rg]
+}
+
+resource "azapi_resource" "defender_devops_github_config" {
+  count                     = (local.enable_defender_devops_github && var.defender_devops_github_oauth_code != null) ? 1 : 0
+  type                      = "Microsoft.Security/securityConnectors/devops@2024-04-01"
+  name                      = "default"
+  parent_id                 = azapi_resource.defender_devops_github_connector[0].id
+  schema_validation_enabled = false
+
+  body = jsonencode({
+    properties = local.github_devops_config_properties
+  })
+
+  depends_on = [azapi_resource.defender_devops_github_connector]
+}
+
+resource "azapi_resource" "defender_devops_ado_connector" {
+  count                     = local.enable_defender_devops_ado ? 1 : 0
+  type                      = "Microsoft.Security/securityConnectors@2024-08-01-preview"
+  name                      = var.defender_devops_ado_connector_name
+  location                  = var.location
+  parent_id                 = azurerm_resource_group.rg.id
+  schema_validation_enabled = false
+
+  body = jsonencode({
+    properties = {
+      environmentName     = "AzureDevOps"
+      hierarchyIdentifier = random_uuid.defender_devops_ado_hierarchy_id.result
+      environmentData = {
+        environmentType = "AzureDevOpsScope"
+      }
+      offerings = [
+        {
+          offeringType = "CspmMonitorAzureDevOps"
+        }
+      ]
+    }
+  })
+
+  depends_on = [azurerm_resource_group.rg]
+}
+
+resource "azapi_resource" "defender_devops_ado_config" {
+  count                     = (local.enable_defender_devops_ado && var.defender_devops_ado_oauth_code != null) ? 1 : 0
+  type                      = "Microsoft.Security/securityConnectors/devops@2024-04-01"
+  name                      = "default"
+  parent_id                 = azapi_resource.defender_devops_ado_connector[0].id
+  schema_validation_enabled = false
+
+  body = jsonencode({
+    properties = local.ado_devops_config_properties
+  })
+
+  depends_on = [azapi_resource.defender_devops_ado_connector]
+}
+
 # Random suffix to mimic uniqueString(resourceGroup().id)
 resource "random_id" "suffix" {
   byte_length = 4
@@ -37,10 +210,10 @@ locals {
 
   # Hash of application source & templates to trigger container rebuild when logic/UI changes
   # Combine Python files and HTML templates for source tracking
-  app_source_hash     = sha256(join("", [
+  app_source_hash = sha256(join("", [
     for f in concat(
       [for py in fileset("../src", "**/*.py") : py],
-      ["app/templates/index.html"]  # Explicitly include the HTML template
+      ["app/templates/index.html"] # Explicitly include the HTML template
     ) : fileexists("../src/${f}") ? filesha256("../src/${f}") : ""
   ]))
   product_catalog_hash = fileexists("../src/data/updated_product_catalog(in).csv") ? filesha256("../src/data/updated_product_catalog(in).csv") : "missing"
@@ -56,7 +229,7 @@ resource "azurerm_role_definition" "maas_inference_user" {
   name               = "${var.name_prefix}-${local.suffix}-maas-inference-user"
   role_definition_id = random_uuid.maas_inference_role_id.result
   scope              = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
-  description = "Allows calling Azure AI Foundry MaaS chat/embeddings inference endpoints."
+  description        = "Allows calling Azure AI Foundry MaaS chat/embeddings inference endpoints."
 
   permissions {
     actions = []
@@ -87,7 +260,7 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   geo_location {
     location          = var.location
     failover_priority = 0
-    zone_redundant    = false  # Disable zone redundancy to avoid high demand issues for demo
+    zone_redundant    = false # Disable zone redundancy to avoid high demand issues for demo
   }
   free_tier_enabled             = false
   analytical_storage_enabled    = false
@@ -123,10 +296,10 @@ resource "azapi_resource" "storage" {
     }
     kind = "StorageV2"
     properties = {
-      accessTier                   = "Hot"
-      allowSharedKeyAccess         = true
-      minimumTlsVersion            = "TLS1_2"
-      supportsHttpsTrafficOnly     = true
+      accessTier               = "Hot"
+      allowSharedKeyAccess     = true
+      minimumTlsVersion        = "TLS1_2"
+      supportsHttpsTrafficOnly = true
     }
   })
   identity {
@@ -159,8 +332,8 @@ resource "azapi_resource" "ai_foundry" {
 # Ensure allowProjectManagement is applied (some older API versions ignore it during create).
 # This PATCH uses a newer api-version that supports the property and updates the existing account in place.
 resource "azapi_update_resource" "ai_foundry_enable_project_mgmt" {
-  type                      = "Microsoft.CognitiveServices/accounts@2025-06-01"
-  resource_id               = azapi_resource.ai_foundry.id
+  type        = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  resource_id = azapi_resource.ai_foundry.id
 
   body = jsonencode({
     properties = {
@@ -300,7 +473,7 @@ resource "azurerm_log_analytics_workspace" "law" {
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "PerGB2018"
   retention_in_days   = 90
-  
+
   depends_on = [
     azurerm_resource_group.rg
   ]
@@ -312,12 +485,12 @@ resource "azurerm_application_insights" "appinsights" {
   resource_group_name = azurerm_resource_group.rg.name
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.law.id
-  
+
   # Disable billing features to avoid 404 errors
-  daily_data_cap_in_gb                     = 1
-  daily_data_cap_notifications_disabled    = true
-  sampling_percentage                       = 100
-  
+  daily_data_cap_in_gb                  = 1
+  daily_data_cap_notifications_disabled = true
+  sampling_percentage                   = 100
+
   lifecycle {
     ignore_changes = [
       tags,
@@ -328,7 +501,7 @@ resource "azurerm_application_insights" "appinsights" {
       local_authentication_disabled
     ]
   }
-  
+
   depends_on = [
     azurerm_resource_group.rg,
     azurerm_log_analytics_workspace.law
@@ -341,7 +514,7 @@ resource "azurerm_container_registry" "acr" {
   location            = var.location
   sku                 = "Standard"
   admin_enabled       = true
-  
+
   depends_on = [
     azurerm_resource_group.rg
   ]
@@ -349,11 +522,11 @@ resource "azurerm_container_registry" "acr" {
 
 # Container Apps environment (alternative to App Service)
 resource "azurerm_container_app_environment" "app_env" {
-  count                        = local.deploy_to_container_apps ? 1 : 0
-  name                         = "${var.name_prefix}-${local.suffix}-cae"
-  location                     = var.location
-  resource_group_name          = azurerm_resource_group.rg.name
-  log_analytics_workspace_id   = azurerm_log_analytics_workspace.law.id
+  count                      = local.deploy_to_container_apps ? 1 : 0
+  name                       = "${var.name_prefix}-${local.suffix}-cae"
+  location                   = var.location
+  resource_group_name        = azurerm_resource_group.rg.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
 }
 
 resource "azurerm_user_assigned_identity" "containerapp_identity" {
@@ -365,11 +538,11 @@ resource "azurerm_user_assigned_identity" "containerapp_identity" {
 
 # Container Apps deployment (uses ACR image)
 resource "azurerm_container_app" "app" {
-  count                       = local.deploy_to_container_apps ? 1 : 0
-  name                        = "${var.name_prefix}-${local.suffix}-ca"
-  resource_group_name         = azurerm_resource_group.rg.name
+  count                        = local.deploy_to_container_apps ? 1 : 0
+  name                         = "${var.name_prefix}-${local.suffix}-ca"
+  resource_group_name          = azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.app_env[0].id
-  revision_mode               = "Single"
+  revision_mode                = "Single"
 
   identity {
     type         = "UserAssigned"
@@ -612,8 +785,8 @@ resource "azurerm_container_app" "app" {
   }
 
   registry {
-    server               = azurerm_container_registry.acr.login_server
-    identity             = azurerm_user_assigned_identity.containerapp_identity[0].id
+    server   = azurerm_container_registry.acr.login_server
+    identity = azurerm_user_assigned_identity.containerapp_identity[0].id
   }
 
   secret {
@@ -691,11 +864,11 @@ resource "null_resource" "docker_image_build" {
   # 4. ACR or app changes
   # 5. Force rebuild on every apply (always_run ensures terraform always executes the provisioner)
   triggers = {
-    dockerfile_hash     = local.dockerfile_hash
-    app_source_hash     = local.app_source_hash
-    requirements_hash   = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
-    acr_id              = azurerm_container_registry.acr.id
-    always_run          = timestamp()  # Forces provisioner to run on every apply
+    dockerfile_hash   = local.dockerfile_hash
+    app_source_hash   = local.app_source_hash
+    requirements_hash = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
+    acr_id            = azurerm_container_registry.acr.id
+    always_run        = timestamp() # Forces provisioner to run on every apply
   }
 
   depends_on = [
@@ -703,7 +876,7 @@ resource "null_resource" "docker_image_build" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host ""
       Write-Host "=========================================="
       Write-Host "Building & Pushing Docker Image to ACR"
@@ -814,15 +987,15 @@ resource "azurerm_linux_web_app" "app" {
   }
 
   site_config {
-    always_on         = true
-    http2_enabled     = true
-    websockets_enabled = true
+    always_on           = true
+    http2_enabled       = true
+    websockets_enabled  = true
     minimum_tls_version = "1.2"
     # Ensure App Service waits for container readiness
     health_check_path                 = "/health"
     health_check_eviction_time_in_min = 10
     application_stack {
-      docker_image_name   = "zava-chat-app:latest"
+      docker_image_name = "zava-chat-app:latest"
       # Use full https URL for docker registry
       docker_registry_url = "https://${local.registry_name}.azurecr.io"
     }
@@ -834,45 +1007,45 @@ resource "azurerm_linux_web_app" "app" {
     WEBSITES_ENABLE_APP_SERVICE_STORAGE = "false"
     DOCKER_ENABLE_CI                    = "true"
     WEBSITES_PORT                       = "8000"
-    A2A_DEBUG                            = "true"
-    APP_BUILD_ID                         = local.app_source_hash
+    A2A_DEBUG                           = "true"
+    APP_BUILD_ID                        = local.app_source_hash
 
     # GPT Configuration (using managed identity)
-    gpt_endpoint                        = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-    gpt_deployment                      = var.chat_model_deployment
-    gpt_api_version                     = "2024-12-01-preview"
+    gpt_endpoint    = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+    gpt_deployment  = var.chat_model_deployment
+    gpt_api_version = "2024-12-01-preview"
 
     # MSFT Foundry Configuration (using managed identity)
-    AZURE_AI_FOUNDRY_ENDPOINT           = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-    AZURE_AI_PROJECT_NAME               = local.ai_project_name
-    AZURE_AI_PROJECT_ENDPOINT           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
+    AZURE_AI_FOUNDRY_ENDPOINT            = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+    AZURE_AI_PROJECT_NAME                = local.ai_project_name
+    AZURE_AI_PROJECT_ENDPOINT            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
     AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = var.chat_model_deployment
 
     # MSFT Foundry OpenAI Configuration (using managed identity)
-    AZURE_OPENAI_CHAT_DEPLOYMENT        = var.chat_model_deployment
-    AZURE_OPENAI_EMBEDDING_DEPLOYMENT   = "text-embedding-3-small"
-    AZURE_OPENAI_ENDPOINT               = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
-    AZURE_OPENAI_API_VERSION            = "2024-02-01"
+    AZURE_OPENAI_CHAT_DEPLOYMENT      = var.chat_model_deployment
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "text-embedding-3-small"
+    AZURE_OPENAI_ENDPOINT             = "https://${local.ai_foundry_name}.cognitiveservices.azure.com/"
+    AZURE_OPENAI_API_VERSION          = "2024-02-01"
 
     # External Service Keys via Key Vault
-    SEARCH_SERVICE_KEY                  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/search-admin-key)"
-    COSMOS_DB_KEY                       = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : ""
-    STORAGE_CONNECTION_STRING           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
+    SEARCH_SERVICE_KEY        = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/search-admin-key)"
+    COSMOS_DB_KEY             = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : ""
+    STORAGE_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
     # Multi-Agent Configuration - Agent IDs from Key Vault
-    USE_MULTI_AGENT                     = var.enable_multi_agent ? "true" : "false"
-    AZURE_AI_AGENT_ENDPOINT             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
-    AGENT_CORA_ID                       = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
-    AGENT_INTERIOR_DESIGNER_ID          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
-    AGENT_INVENTORY_AGENT_ID            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
-    AGENT_CUSTOMER_LOYALTY_ID           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
-    AGENT_CART_MANAGER_ID               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
-    cora                                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
-    interior_designer                   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
-    inventory_agent                     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
-    customer_loyalty                    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
-    cart_manager                        = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
-    CUSTOMER_ID                         = "CUST001"
+    USE_MULTI_AGENT            = var.enable_multi_agent ? "true" : "false"
+    AZURE_AI_AGENT_ENDPOINT    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-endpoint)"
+    AGENT_CORA_ID              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
+    AGENT_INTERIOR_DESIGNER_ID = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
+    AGENT_INVENTORY_AGENT_ID   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
+    AGENT_CUSTOMER_LOYALTY_ID  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
+    AGENT_CART_MANAGER_ID      = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
+    cora                       = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cora-id)"
+    interior_designer          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-interior-designer-id)"
+    inventory_agent            = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-inventory-agent-id)"
+    customer_loyalty           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-customer-loyalty-id)"
+    cart_manager               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cart-manager-id)"
+    CUSTOMER_ID                = "CUST001"
   }
 
   depends_on = [
@@ -896,14 +1069,14 @@ resource "azurerm_role_assignment" "webapp_acr_pull" {
 
 # Key Vault for central secret management
 resource "azurerm_key_vault" "kv" {
-  name                = local.key_vault_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  tenant_id           = data.azurerm_client_config.current.tenant_id
-  sku_name            = "standard"
-  soft_delete_retention_days = 7
-  purge_protection_enabled  = true
-  enable_rbac_authorization = true
+  name                          = local.key_vault_name
+  location                      = azurerm_resource_group.rg.location
+  resource_group_name           = azurerm_resource_group.rg.name
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  sku_name                      = "standard"
+  soft_delete_retention_days    = 7
+  purge_protection_enabled      = true
+  enable_rbac_authorization     = true
   public_network_access_enabled = true
 
   network_acls {
@@ -1044,7 +1217,7 @@ resource "null_resource" "set_kv_secrets" {
 
 # External data source for agents state
 data "external" "agents_state" {
-  program = ["python", "read_agents_state.py"]
+  program    = ["python", "read_agents_state.py"]
   depends_on = [null_resource.deploy_multi_agents]
 }
 
@@ -1207,8 +1380,8 @@ resource "azurerm_portal_dashboard" "observability" {
   dashboard_properties = jsonencode({
     lenses = {
       "0" = {
-        order  = 0
-        parts  = {
+        order = 0
+        parts = {
           "0" = {
             position = { x = 0, y = 0, width = 6, height = 4 }
             metadata = {
@@ -1222,9 +1395,9 @@ resource "azurerm_portal_dashboard" "observability" {
                 content = {
                   version = "1.0.0"
                   chart = {
-                    title      = "App Service Requests"
-                    metrics    = [{ resourceMetadata = { id = azurerm_linux_web_app.app[0].id }, name = "Requests", aggregationType = "Total" }]
-                    timespan   = { duration = "PT1H" }
+                    title         = "App Service Requests"
+                    metrics       = [{ resourceMetadata = { id = azurerm_linux_web_app.app[0].id }, name = "Requests", aggregationType = "Total" }]
+                    timespan      = { duration = "PT1H" }
                     visualization = { chartType = "Line" }
                   }
                 }
@@ -1243,8 +1416,8 @@ resource "azurerm_portal_dashboard" "observability" {
                 content = {
                   version = "1.0.0"
                   chart = {
-                    title   = "CPU Percentage"
-                    metrics = [{ resourceMetadata = { id = azurerm_service_plan.appserviceplan[0].id }, name = "CpuPercentage", aggregationType = "Average" }]
+                    title    = "CPU Percentage"
+                    metrics  = [{ resourceMetadata = { id = azurerm_service_plan.appserviceplan[0].id }, name = "CpuPercentage", aggregationType = "Average" }]
                     timespan = { duration = "PT1H" }
                   }
                 }
@@ -1263,8 +1436,8 @@ resource "azurerm_portal_dashboard" "observability" {
                 content = {
                   version = "1.0.0"
                   chart = {
-                    title = "Cosmos Total Requests"
-                    metrics = [{ resourceMetadata = { id = azurerm_cosmosdb_account.cosmos.id }, name = "TotalRequests", aggregationType = "Total" }]
+                    title    = "Cosmos Total Requests"
+                    metrics  = [{ resourceMetadata = { id = azurerm_cosmosdb_account.cosmos.id }, name = "TotalRequests", aggregationType = "Total" }]
                     timespan = { duration = "PT1H" }
                   }
                 }
@@ -1283,8 +1456,8 @@ resource "azurerm_portal_dashboard" "observability" {
                 content = {
                   version = "1.0.0"
                   chart = {
-                    title = "App Insights Server Response Time"
-                    metrics = [{ resourceMetadata = { id = azurerm_application_insights.appinsights.id }, name = "requests/duration", aggregationType = "Average" }]
+                    title    = "App Insights Server Response Time"
+                    metrics  = [{ resourceMetadata = { id = azurerm_application_insights.appinsights.id }, name = "requests/duration", aggregationType = "Average" }]
                     timespan = { duration = "PT1H" }
                   }
                 }
@@ -2048,7 +2221,7 @@ resource "null_resource" "vector_index_update" {
   depends_on = [null_resource.data_pipeline]
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host "Triggering vector index update if catalog changed..."
       $pythonCmd = "python"
       if (Get-Command python3 -ErrorAction SilentlyContinue) { $pythonCmd = "python3" }
@@ -2278,7 +2451,7 @@ resource "null_resource" "verify_real_agents" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host ""; Write-Host "=== Verifying Real Agent Provisioning (Post-Deploy) ==="; Write-Host ""
       $pythonCmd = "python"
       if (Get-Command python3 -ErrorAction SilentlyContinue) { $pythonCmd = "python3" }
@@ -2504,7 +2677,7 @@ resource "null_resource" "verify_multi_agent_remote" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host ""; Write-Host "=== Verifying Multi-Agent Deployment (Remote) ==="; Write-Host ""
       $appUrl = "https://${local.web_app_name}.azurewebsites.net"
       $agentsEndpoint = "$appUrl/agents"
@@ -2543,9 +2716,9 @@ resource "null_resource" "verify_multi_agent_remote" {
   }
 
   triggers = {
-    web_app_id   = azurerm_linux_web_app.app[0].id
-    docker_hash  = local.dockerfile_hash
-    agents_code  = filesha256("../src/chat_app_multi_agent.py")
+    web_app_id  = azurerm_linux_web_app.app[0].id
+    docker_hash = local.dockerfile_hash
+    agents_code = filesha256("../src/chat_app_multi_agent.py")
   }
 }
 
@@ -2561,7 +2734,7 @@ resource "null_resource" "deploy_a2a_automation" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host ""
       Write-Host "============================================================================"
       Write-Host "=== DEPLOYING A2A AUTOMATION FRAMEWORK ==="
@@ -2856,23 +3029,23 @@ try {
   }
 
   triggers = {
-    env_file_id = null_resource.create_env_file[0].id
+    env_file_id     = null_resource.create_env_file[0].id
     app_insights_id = azurerm_application_insights.appinsights.id
-    always_run = timestamp()
+    always_run      = timestamp()
   }
 }
 
 # A2A Monitoring Integration with Azure
 resource "azurerm_monitor_action_group" "a2a_alerts" {
   count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
-  
+
   name                = "${local.web_app_name}-a2a-alerts"
   resource_group_name = azurerm_resource_group.rg.name
   short_name          = "a2aalerts"
 
   webhook_receiver {
-    name        = "a2a-automation-webhook"
-    service_uri = "https://${local.web_app_name}.azurewebsites.net/a2a/automation/webhook/alert"
+    name                    = "a2a-automation-webhook"
+    service_uri             = "https://${local.web_app_name}.azurewebsites.net/a2a/automation/webhook/alert"
     use_common_alert_schema = true
   }
 
@@ -2882,7 +3055,7 @@ resource "azurerm_monitor_action_group" "a2a_alerts" {
 # A2A System Health Alert
 resource "azurerm_monitor_metric_alert" "a2a_system_health" {
   count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
-  
+
   name                = "${local.web_app_name}-a2a-health"
   resource_group_name = azurerm_resource_group.rg.name
   scopes              = [azurerm_linux_web_app.app[0].id]
@@ -2890,26 +3063,26 @@ resource "azurerm_monitor_metric_alert" "a2a_system_health" {
   severity            = 2
   frequency           = "PT1M"
   window_size         = "PT5M"
-  
+
   criteria {
     metric_namespace = "Microsoft.Web/sites"
-    metric_name      = "HealthCheckStatus" 
+    metric_name      = "HealthCheckStatus"
     aggregation      = "Average"
     operator         = "LessThan"
     threshold        = 1
   }
-  
+
   action {
     action_group_id = azurerm_monitor_action_group.a2a_alerts[0].id
   }
-  
+
   depends_on = [azurerm_monitor_action_group.a2a_alerts]
 }
 
 # A2A Performance Alert  
 resource "azurerm_monitor_metric_alert" "a2a_performance" {
   count = (var.enable_a2a_automation && var.enable_monitoring_dashboards && local.deploy_to_appservice) ? 1 : 0
-  
+
   name                = "${local.web_app_name}-a2a-performance"
   resource_group_name = azurerm_resource_group.rg.name
   scopes              = [azurerm_linux_web_app.app[0].id]
@@ -2917,19 +3090,19 @@ resource "azurerm_monitor_metric_alert" "a2a_performance" {
   severity            = 3
   frequency           = "PT1M"
   window_size         = "PT5M"
-  
+
   criteria {
     metric_namespace = "Microsoft.Web/sites"
     metric_name      = "AverageResponseTime"
     aggregation      = "Average"
     operator         = "GreaterThan"
-    threshold        = 5000  # 5 seconds
+    threshold        = 5000 # 5 seconds
   }
-  
+
   action {
     action_group_id = azurerm_monitor_action_group.a2a_alerts[0].id
   }
-  
+
   depends_on = [azurerm_monitor_action_group.a2a_alerts]
 }
 
@@ -2945,7 +3118,7 @@ resource "null_resource" "post_deploy_health" {
 
   provisioner "local-exec" {
     interpreter = ["PowerShell", "-Command"]
-    command = <<-EOT
+    command     = <<-EOT
       Write-Host ""
       Write-Host "============================================================================"
       Write-Host "=== AUTOMATED WEB APP STARTUP FIX ==="
