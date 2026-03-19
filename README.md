@@ -17,9 +17,9 @@ Last updated: 2026-03-19
   
 - [Microsoft Foundry SDKs and Endpoints](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/sdk-overview?view=foundry&pivots=programming-language-python)
 - Microsoft Defender for Cloud (DevOps security):
-   - [Connect GitHub to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-github)
-   - [Connect Azure DevOps to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-devops)
-   - [DevOps security permissions and prerequisites](https://learn.microsoft.com/azure/defender-for-cloud/devops-support)
+  - [Connect GitHub to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-github)
+  - [Connect Azure DevOps to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-devops)
+  - [DevOps security permissions and prerequisites](https://learn.microsoft.com/azure/defender-for-cloud/devops-support)
   
 </details>
 
@@ -29,7 +29,7 @@ Last updated: 2026-03-19
 - [Deployment Approaches (pick one)](#deployment-approaches-pick-one)
 - [Key Features](#key-features)
 - [More Security with Microsoft Defender](#more-security-with-microsoft-defender)
-    - [If the Azure portal blade errors](#if-the-azure-portal-blade-errors)
+  - [If the Azure portal blade errors](#if-the-azure-portal-blade-errors)
 - [About A2A Protocol](#about-a2a-protocol)
 - [Architecture](#architecture)
 - [What Happens Under the Hood](#what-happens-under-the-hood)
@@ -54,12 +54,12 @@ Last updated: 2026-03-19
 ## Deployment Approaches (pick one)
 
 - **Container Apps (recommended default in this repo)**
-   - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "containerapps"`
-   - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
+  - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "containerapps"`
+  - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
 
 - **App Service (Linux custom container)**
-   - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "appservice"` and choose `app_service_sku` (e.g. `P0v3`)
-   - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
+  - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "appservice"` and choose `app_service_sku` (e.g. `P0v3`)
+  - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
    
 ## Key Features
 
@@ -80,6 +80,7 @@ Last updated: 2026-03-19
 
 > [!NOTE]
 > Visibility-first rollout (recommended for demos):
+>
 > - Onboard **GitHub connector only** first to validate the Defender dashboards/workbooks.
 > - Onboard **Azure DevOps connector** only in a **sandbox org/project**.
 > - Keep **PR annotations OFF** initially (no write-back to PRs) until you decide to enable them.
@@ -104,18 +105,19 @@ This repo supports two complementary “Defender” scenarios:
 
 > [!NOTE]
 > Opt out (disable Defender): In [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars), set:
->   - `enable_defender_for_cloud = false`
->   - `enable_defender_devops_security = false`
+>
+> - `enable_defender_for_cloud = false`
+> - `enable_defender_devops_security = false`
 
 ### If the Azure portal blade errors
 
 > If the Azure portal **Defender for Cloud → Environment settings** page fails to load with an error like: `ECS feature flags for project 'Defenders' are not initialized (ErrorAcquiringViewModel)`. Use one of these workarounds:
 
 - **Open the connector resource directly** (bypasses the Environment Settings blade):
-   - Find the connector resource IDs from Terraform outputs (look for `defender_devops_security_connector_ids`).
-   - Open in the portal using this pattern:
-      - `https://portal.azure.com/#resource/<connector-resource-id>/overview`
-      - Example: `.../providers/Microsoft.Security/securityConnectors/github-connector`
+  - Find the connector resource IDs from Terraform outputs (look for `defender_devops_security_connector_ids`).
+  - Open in the portal using this pattern:
+    - `https://portal.azure.com/#resource/<connector-resource-id>/overview`
+    - Example: `.../providers/Microsoft.Security/securityConnectors/github-connector`
 - **List the connector IDs via CLI** (then open them with the URL above): `az resource list -g <rg-name> --resource-type Microsoft.Security/securityConnectors -o table`
 - **Browser reset**: try InPrivate/Incognito, disable extensions (ad blockers), and sign out/in.
 
@@ -156,6 +158,7 @@ This repo supports two complementary “Defender” scenarios:
 
 > [!IMPORTANT]
 > A2A vs the default deployed chat runtime:
+>
 > - **A2A server path**: event/task oriented framework under `src/a2a/` (only available if you deploy/run that server)
 > - **Default path**: `/ws` WebSocket chat + routing + sequential handoffs to real Foundry agents (no event queue required for the default flow)
 
