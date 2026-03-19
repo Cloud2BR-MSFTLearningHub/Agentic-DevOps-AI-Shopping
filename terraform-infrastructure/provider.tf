@@ -22,7 +22,7 @@ provider "azurerm" {
       prevent_deletion_if_contains_resources = false
     }
   }
-  
+
   # Increase timeout for Azure API operations
   skip_provider_registration = false
 }

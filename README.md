@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-03-13
+Last updated: 2026-03-19
 
 ----------
 
@@ -16,6 +16,24 @@ Last updated: 2026-03-13
 <summary><b>List of References</b> (Click to expand)</summary>
   
 - [Microsoft Foundry SDKs and Endpoints](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/sdk-overview?view=foundry&pivots=programming-language-python)
+- Microsoft Defender for Cloud (DevOps security):
+  - [Connect GitHub to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-github)
+  - [Connect Azure DevOps to Defender for Cloud](https://learn.microsoft.com/azure/defender-for-cloud/quickstart-onboard-devops)
+  - [DevOps security permissions and prerequisites](https://learn.microsoft.com/azure/defender-for-cloud/devops-support)
+  
+</details>
+
+<details>
+<summary><b>Table of Content</b> (Click to expand)</summary>
+  
+- [Deployment Approaches (pick one)](#deployment-approaches-pick-one)
+- [Key Features](#key-features)
+- [More Security with Microsoft Defender](#more-security-with-microsoft-defender)
+  - [If the Azure portal blade errors](#if-the-azure-portal-blade-errors)
+- [About A2A Protocol](#about-a2a-protocol)
+- [Architecture](#architecture)
+- [What Happens Under the Hood](#what-happens-under-the-hood)
+- [Verification](#verification)
   
 </details>
 
@@ -28,10 +46,21 @@ Last updated: 2026-03-13
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
 >
-> 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
+> 1. Pick a deployment approach (Container Apps or App Service)
+> 2. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
 
+## Deployment Approaches (pick one)
+
+- **Container Apps (recommended default in this repo)**
+  - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "containerapps"`
+  - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
+
+- **App Service (Linux custom container)**
+  - In `terraform-infrastructure/terraform.tfvars`: set `deployment_target = "appservice"` and choose `app_service_sku` (e.g. `P0v3`)
+  - Run: `cd terraform-infrastructure` then `terraform apply -var-file terraform.tfvars`
+   
 ## Key Features
 
 - **Multi-agent chat orchestration (default runtime)**: WebSocket `/ws` chat app orchestrates multiple agents in a single conversation flow (routing + multi-step handoffs)
@@ -49,11 +78,52 @@ Last updated: 2026-03-13
 - **UI-visible diagnostics**: Correlated `error_id` responses and optional tracebacks via `A2A_DEBUG=true` for faster troubleshooting
 - **Optional A2A server included**: `src/a2a/` contains an A2A-style server framework, but it is not the default Container Apps entrypoint unless you deploy it explicitly
 
+> [!NOTE]
+> Visibility-first rollout (recommended for demos):
+>
+> - Onboard **GitHub connector only** first to validate the Defender dashboards/workbooks.
+> - Onboard **Azure DevOps connector** only in a **sandbox org/project**.
+> - Keep **PR annotations OFF** initially (no write-back to PRs) until you decide to enable them.
+
+## More Security with Microsoft Defender
+
+> [!IMPORTANT]
+> **Defender is enabled by default in this repo's Terraform defaults.** This can incur Azure costs (Defender plans) and will provision DevOps security connector resources that still require a one-time interactive authorization step for GitHub/Azure DevOps.
+> To opt out, explicitly set the related variables to `false` in [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars).
+
+This repo supports two complementary “Defender” scenarios:
+
+1. **Microsoft Defender for Cloud (workload protection / cloud posture)**
+   - This repo includes an opt-in Terraform configuration to enable Defender for Cloud plans at the subscription scope.
+   - Toggle via `enable_defender_for_cloud` in [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars) (or the example `tfvars` files above).
+   - Note: enabling Defender plans can incur Azure costs.
+
+2. **Defender for Cloud DevOps Security (GHAS / ADO aggregation & reporting)**
+   - This repo can provision the **connector resources** via Terraform, but onboarding still requires **interactive authorization** to GitHub and/or Azure DevOps in the Azure portal (or providing a one-time OAuth code).
+   - This is the feature area that provides the “central dashboard” experience for GHAS-like findings (code scanning, dependency, secrets) across **organizations/projects** (not just individual repos).
+   - It can optionally add **Pull Request annotations** (a write-back action) but only when you explicitly enable/configure that feature.
+
+> [!NOTE]
+> Opt out (disable Defender): In [terraform-infrastructure/terraform.tfvars](terraform-infrastructure/terraform.tfvars), set:
+>
+> - `enable_defender_for_cloud = false`
+> - `enable_defender_devops_security = false`
+
+### If the Azure portal blade errors
+
+> If the Azure portal **Defender for Cloud → Environment settings** page fails to load with an error like: `ECS feature flags for project 'Defenders' are not initialized (ErrorAcquiringViewModel)`. Use one of these workarounds:
+
+- **Open the connector resource directly** (bypasses the Environment Settings blade):
+  - Find the connector resource IDs from Terraform outputs (look for `defender_devops_security_connector_ids`).
+  - Open in the portal using this pattern:
+    - `https://portal.azure.com/#resource/<connector-resource-id>/overview`
+    - Example: `.../providers/Microsoft.Security/securityConnectors/github-connector`
+- **List the connector IDs via CLI** (then open them with the URL above): `az resource list -g <rg-name> --resource-type Microsoft.Security/securityConnectors -o table`
+- **Browser reset**: try InPrivate/Incognito, disable extensions (ad blockers), and sign out/in.
+
 ## About A2A Protocol
 
-`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.` Like a communication pattern for coordinating multiple agents through structured messages, delegation, and (optionally) event-driven workflows.
-
-This repo contains **two multi-agent implementations**:
+`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.` Like a communication pattern for coordinating multiple agents through structured messages, delegation, and (optionally) event-driven workflows. This repo contains **two multi-agent implementations**:
 
 - **Default deployed chat runtime (what the Dockerfile runs)**: WebSocket `/ws` in `src/chat_app_multi_agent.py`, which routes requests and orchestrates **real Azure AI Foundry Agents** in a multi-step handoff sequence.
 - **Optional A2A server implementation**: an A2A-style server under `src/a2a/` (routers, coordinator, event/task framework). Use this only if you deploy/run that entrypoint.
@@ -87,7 +157,7 @@ This repo contains **two multi-agent implementations**:
 - **Product catalog helper/plugin (if used)**: `src/app/agents/product_information_plugin.py`
 
 > [!IMPORTANT]
-> A2A vs the default deployed chat runtime
+> A2A vs the default deployed chat runtime:
 >
 > - **A2A server path**: event/task oriented framework under `src/a2a/` (only available if you deploy/run that server)
 > - **Default path**: `/ws` WebSocket chat + routing + sequential handoffs to real Foundry agents (no event queue required for the default flow)
@@ -229,7 +299,7 @@ graph TD
             
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1314-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-03-13</p>
+  <img src="https://img.shields.io/badge/Total%20views-1343-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-03-19</p>
 </div>
 <!-- END BADGE -->

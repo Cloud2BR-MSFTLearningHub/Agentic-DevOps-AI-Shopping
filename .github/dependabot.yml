@@ -1,0 +1,36 @@
+version: 2
+
+# Note: Dependabot schedule only supports: daily | weekly | monthly.
+
+updates:
+  # Root python dependencies (if used)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      # interval: "weekly"  # higher frequency
+      interval: "monthly"   # lowest supported frequency
+    open-pull-requests-limit: 5
+
+  # App dependencies
+  - package-ecosystem: "pip"
+    directory: "/src"
+    schedule:
+      # interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
+  # A2A server dependencies
+  - package-ecosystem: "pip"
+    directory: "/src/a2a"
+    schedule:
+      # interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
+  # Terraform provider updates
+  - package-ecosystem: "terraform"
+    directory: "/terraform-infrastructure"
+    schedule:
+      # interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 5

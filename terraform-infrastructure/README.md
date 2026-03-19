@@ -55,6 +55,15 @@ Templates structure:
 - terraform.tfvars `(Variable values)`: This file contains the actual values for the variables defined in `variables.tf`. By separating variable definitions and values, you can easily switch between different sets of values for different environments (e.g., development, staging, production) without changing the main configuration files.
 - outputs.tf `(Output values)`: This file defines the output values that Terraform should return after applying the configuration. Outputs are useful for displaying information about the resources created, such as IP addresses, resource IDs, and other important details. They can also be used as inputs for other Terraform configurations or scripts.
 
+## Optional: Microsoft Defender for Cloud
+
+This Terraform setup includes an opt-in configuration to enable **Microsoft Defender for Cloud** plans at the subscription scope.
+
+> [!IMPORTANT]
+> Enabling Defender plans can incur additional costs in your Azure subscription.
+
+- To enable, set `enable_defender_for_cloud = true` in `terraform.tfvars` and optionally adjust `defender_for_cloud_plans`.
+
 ## How to execute it 
 
 ```mermaid 
@@ -127,7 +136,7 @@ graph TD;
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1314-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-03-13</p>
+  <img src="https://img.shields.io/badge/Total%20views-1343-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-03-19</p>
 </div>
 <!-- END BADGE -->

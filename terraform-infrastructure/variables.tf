@@ -99,3 +99,110 @@ variable "chat_model_deployment" {
   default     = "gpt-4o-mini"
 }
 
+variable "enable_defender_for_cloud" {
+  type        = bool
+  description = "Whether to enable Microsoft Defender for Cloud plans at the subscription scope (may incur costs)."
+  default     = true
+}
+
+variable "defender_for_cloud_tier" {
+  type        = string
+  description = "Defender for Cloud pricing tier. Use 'Standard' to enable paid plans; 'Free' to disable paid benefits while keeping the pricing resource declared."
+  default     = "Standard"
+
+  validation {
+    condition     = contains(["Free", "Standard"], var.defender_for_cloud_tier)
+    error_message = "defender_for_cloud_tier must be either 'Free' or 'Standard'."
+  }
+}
+
+variable "defender_for_cloud_plans" {
+  type = set(string)
+
+  description = <<-EOT
+  Defender for Cloud plans to enable via subscription pricing.
+  NOTE: Plan names are provider/API dependent. If 'terraform apply' fails on a plan name, remove it from this set.
+  EOT
+
+  # Keep the default set conservative and aligned with resources in this repo.
+  # - ContainerRegistry: ACR image scanning
+  # - Containers: container workload protection
+  # - AppServices: App Service protection
+  # - StorageAccounts: storage threat protection
+  # - KeyVaults: Key Vault threat protection
+  default = [
+    "ContainerRegistry",
+    "Containers",
+    "AppServices",
+    "StorageAccounts",
+    "KeyVaults",
+  ]
+}
+
+variable "enable_defender_devops_security" {
+  type        = bool
+  description = "Whether to provision Defender for Cloud DevOps security connector scaffolding (GitHub/Azure DevOps). Authorization still requires an interactive consent step."
+  default     = true
+}
+
+variable "enable_defender_devops_security_github" {
+  type        = bool
+  description = "Whether to provision the GitHub DevOps security connector (requires enable_defender_devops_security=true)."
+  default     = true
+}
+
+variable "enable_defender_devops_security_ado" {
+  type        = bool
+  description = "Whether to provision the Azure DevOps DevOps security connector (requires enable_defender_devops_security=true)."
+  default     = true
+}
+
+variable "defender_devops_auto_discovery" {
+  type        = string
+  description = "Auto-discovery mode for Defender DevOps security connectors. Use 'Enabled' for full discovery, or 'Disabled' with an explicit inventory list."
+  default     = "Enabled"
+
+  validation {
+    condition     = contains(["Enabled", "Disabled", "NotApplicable"], var.defender_devops_auto_discovery)
+    error_message = "defender_devops_auto_discovery must be one of: Enabled, Disabled, NotApplicable."
+  }
+}
+
+variable "defender_devops_github_connector_name" {
+  type        = string
+  description = "Name for the GitHub DevOps security connector resource (max 20 chars recommended for portal parity)."
+  default     = "github-connector"
+}
+
+variable "defender_devops_ado_connector_name" {
+  type        = string
+  description = "Name for the Azure DevOps DevOps security connector resource (max 20 chars recommended for portal parity)."
+  default     = "ado-connector"
+}
+
+variable "defender_devops_github_inventory_list" {
+  type        = set(string)
+  description = "Optional top-level inventory list for GitHub when auto-discovery is Disabled. Values depend on connector API version and inventoryKind."
+  default     = []
+}
+
+variable "defender_devops_ado_inventory_list" {
+  type        = set(string)
+  description = "Optional top-level inventory list for Azure DevOps when auto-discovery is Disabled."
+  default     = []
+}
+
+variable "defender_devops_github_oauth_code" {
+  type        = string
+  description = "Optional one-time OAuth authorization code for GitHub connector devops config. Only used during create/update and not returned by GET. Leave null to authorize via Azure portal UI."
+  default     = null
+  sensitive   = true
+}
+
+variable "defender_devops_ado_oauth_code" {
+  type        = string
+  description = "Optional one-time OAuth authorization code for Azure DevOps connector devops config. Only used during create/update and not returned by GET. Leave null to authorize via Azure portal UI."
+  default     = null
+  sensitive   = true
+}
+
