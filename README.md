@@ -158,7 +158,6 @@ This repo supports two complementary “Defender” scenarios:
 
 > [!IMPORTANT]
 > A2A vs the default deployed chat runtime:
->
 > - **A2A server path**: event/task oriented framework under `src/a2a/` (only available if you deploy/run that server)
 > - **Default path**: `/ws` WebSocket chat + routing + sequential handoffs to real Foundry agents (no event queue required for the default flow)
 
