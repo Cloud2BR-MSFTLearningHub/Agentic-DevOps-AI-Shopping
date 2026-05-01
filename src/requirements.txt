@@ -1,6 +1,6 @@
 requests==2.32.4
 python-dotenv==1.0.1
-pandas>=2.2.2
+pandas>=3.0.2
 azure-cosmos==4.9.0
 azure-identity==1.19.0
 azure-search-documents==11.6.0
