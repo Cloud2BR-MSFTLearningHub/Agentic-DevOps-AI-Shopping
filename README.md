@@ -62,7 +62,7 @@ Last updated: 2026-04-06
 
 ### Azure Resource Providers to Register
 
-Before running `terraform apply`, go to:
+> Before running `terraform apply`, go to:
 
 1. Azure Portal -> Subscriptions -> *your subscription*
 2. Settings -> Resource providers
