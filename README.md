@@ -25,7 +25,8 @@ Last updated: 2026-04-06
 
 <details>
 <summary><b>Table of Content</b> (Click to expand)</summary>
-  
+
+- [Prerequisites](#prerequisites)
 - [Deployment Approaches (pick one)](#deployment-approaches-pick-one)
 - [Key Features](#key-features)
 - [More Security with Microsoft Defender](#more-security-with-microsoft-defender)
@@ -50,6 +51,14 @@ Last updated: 2026-04-06
 > 2. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
+
+## Prerequisites
+
+- An `Azure subscription is required`. All other resources, including instructions for creating a Resource Group, are provided in this workshop.
+- `Contributor role assigned or any custom role that allows`: access to manage all resources, and the ability to deploy resources within subscription.
+- Please ensure that:
+  - [Terraform is installed on your local machine](https://developer.hashicorp.com/terraform/tutorials/azure-get-started/install-cli#install-terraform).
+  - [Install the Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) to work with both Terraform and Azure commands.
 
 ## Deployment Approaches (pick one)
 
