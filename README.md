@@ -60,6 +60,49 @@ Last updated: 2026-04-06
   - [Terraform is installed on your local machine](https://developer.hashicorp.com/terraform/tutorials/azure-get-started/install-cli#install-terraform).
   - [Install the Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) to work with both Terraform and Azure commands.
 
+### Azure Resource Providers to Register
+
+> Before running `terraform apply`, go to:
+
+1. Azure Portal -> **Subscriptions** -> *your subscription*
+2. **Settings** -> Resource providers
+3. Search each provider below and click **Register** if the status is not already **Registered**
+
+<details>
+<summary><b>Resource providers </b> (Click to expand)</summary>
+
+| Resource provider namespace | Required for this IaC | Notes |
+|---|---|---|
+| `Microsoft.Resources` | Yes | Resource group operations |
+| `Microsoft.Authorization` | Yes | Role assignments and custom role definition |
+| `Microsoft.Storage` | Yes | Storage account and data pipeline storage usage |
+| `Microsoft.CognitiveServices` | Yes | Azure AI Foundry account, project, and connections |
+| `Microsoft.DocumentDB` | Yes | Azure Cosmos DB account, SQL DB/container, SQL role assignments |
+| `Microsoft.Search` | Yes | Azure AI Search service and indexes |
+| `Microsoft.KeyVault` | Yes | Key Vault for app secrets |
+| `Microsoft.ContainerRegistry` | Yes | Azure Container Registry |
+| `Microsoft.ManagedIdentity` | Yes | User-assigned managed identity |
+| `Microsoft.App` | Yes | Azure Container Apps environment and app |
+| `Microsoft.Web` | Yes | App Service Plan and Linux Web App deployment target |
+| `Microsoft.OperationalInsights` | Yes | Log Analytics workspace |
+| `Microsoft.Insights` | Yes | Application Insights, autoscale, alerts, and action groups |
+| `Microsoft.Portal` | Yes | Portal dashboard resource |
+| `Microsoft.Security` | Optional | Required when Defender for Cloud/DevOps connector options are enabled |
+
+</details>
+
+> [!TIP]
+> CLI alternative (register all required providers):
+>
+> ```sh
+> for ns in Microsoft.Resources Microsoft.Authorization Microsoft.Storage Microsoft.CognitiveServices Microsoft.DocumentDB Microsoft.Search Microsoft.KeyVault Microsoft.ContainerRegistry Microsoft.ManagedIdentity Microsoft.App Microsoft.Web Microsoft.OperationalInsights Microsoft.Insights Microsoft.Portal; do
+>   az provider register --namespace "$ns" --wait
+> done
+>
+> # Only if you enable Defender options in terraform.tfvars:
+> az provider register --namespace Microsoft.Security --wait
+> ```
+
 ## Deployment Approaches (pick one)
 
 - **Container Apps (recommended default in this repo)**
